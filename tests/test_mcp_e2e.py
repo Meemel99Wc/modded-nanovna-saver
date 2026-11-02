@@ -230,3 +230,18 @@ def test_http_requires_token(saver):
         assert run(qapp, go, timeout=30) == (401, 403)
     finally:
         svc.stop_http()
+
+
+def test_data_at_parameter(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    call(saver, "sweep_configure", {"start_hz": 140_000_000, "stop_hz": 146_000_000})
+    text(call(saver, "sweep_run"))
+    both = text(call(saver, "data_at", {"freq_hz": 143_000_000}))
+    assert list(both)[0] == "s21" and "s11" in both
+    only = text(call(saver, "data_at", {"freq_hz": 143_000_000, "parameter": "s21"}))
+    assert list(only) == ["s21"]
+    assert only["s21"]["db"] == both["s21"]["db"]
+    only11 = text(call(saver, "data_at", {"freq_hz": 143_000_000, "parameter": "s11"}))
+    assert list(only11) == ["s11"]

@@ -592,7 +592,7 @@ class SaverAPI:
         done. Returns a summary of the result (data_summary). In it
         min_gain/max_gain are the extremes of the WHOLE sweep, not the
         value at any given frequency: to read S11/S21 at one frequency
-        use data_at(freq_hz) (the sweep must cover it). Full data:
+        use data_at(freq_hz, parameter="s21") (the sweep must cover it). Full data:
         data_points or the saver://sweep resources."""
         return Pending(self._start_sweep(), lambda _: self.data_summary())
 
@@ -674,7 +674,7 @@ class SaverAPI:
         and <= 1.5, series resonances (X = 0), and S21 min/max gain with
         the -3 dB band around the maximum. min_gain/max_gain are the
         extremes of the whole sweep, not values at a given frequency:
-        for one frequency use data_at(freq_hz)."""
+        for one frequency use data_at(freq_hz, parameter="s21"|"s11")."""
         s11, s21 = self._data()
         out: dict[str, Any] = {
             "source": self.app.sweepSource,
@@ -738,18 +738,29 @@ class SaverAPI:
 
     @action("data_at", risk=Risk.READ, category="data",
             gui=("Marker: values at marker frequency",))
-    def data_at(self, freq_hz: int) -> dict:
-        """S11 and S21 at one frequency: the nearest MEASURED point to
-        freq_hz (no interpolation), so the sweep must cover freq_hz. Use
-        this for a value at a given frequency; the min_gain/max_gain of
-        sweep_run/data_summary are whole-sweep extremes."""
+    def data_at(
+        self,
+        freq_hz: int,
+        parameter: Literal["s11", "s21", "both"] = "both",
+    ) -> dict:
+        """Value at ONE frequency: the nearest MEASURED point to freq_hz
+        (no interpolation), so the sweep must cover freq_hz. Use
+        parameter="s21" for filter gain/attenuation (returns only S21,
+        its "db" is the gain) and "s11" for reflection; "both" returns
+        S21 first, then S11. The min_gain/max_gain of sweep_run and
+        data_summary are whole-sweep extremes, not this."""
         s11, s21 = self._data()
         if not s11:
             raise ActionError("Ei mittausdataa. Aja sweep_run ensin.")
         i = min(range(len(s11)), key=lambda k: abs(s11[k].freq - freq_hz))
-        out = {"s11": _point(s11[i], "s11")}
-        if i < len(s21):
-            out["s21"] = _point(s21[i], "s21")
+        out: dict[str, Any] = {}
+        if parameter in ("s21", "both"):
+            if i < len(s21):
+                out["s21"] = _point(s21[i], "s21")
+            elif parameter == "s21":
+                raise ActionError("Ei S21-dataa tässä pyyhkäisyssä.")
+        if parameter in ("s11", "both"):
+            out["s11"] = _point(s11[i], "s11")
         return out
 
     @action("reference_set", risk=Risk.ACT, category="data",
