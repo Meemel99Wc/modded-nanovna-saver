@@ -41,6 +41,17 @@ logger = logging.getLogger(__name__)
 
 LOG_KEEP = 500
 
+# Display text for LogEntry.outcome. The outcome values themselves are
+# machine-readable states (tests, eval driver, JSON log): do not translate
+# them, translate only here.
+OUTCOME_TEXT = {
+    "ok": "ok",
+    "denied": "estetty",
+    "error": "virhe",
+    "timeout": "aikakatkaisu",
+    "stopped": "pysäytetty",
+}
+
 
 @dataclass
 class LogEntry:
@@ -55,7 +66,8 @@ class LogEntry:
     def line(self) -> str:
         stamp = time.strftime("%H:%M:%S", time.localtime(self.time))
         args = ", ".join(f"{k}={v!r}" for k, v in self.args.items())
-        text = f"{stamp} {self.tool}({args}) -> {self.outcome}"
+        outcome = OUTCOME_TEXT.get(self.outcome, self.outcome)
+        text = f"{stamp} {self.tool}({args}) -> {outcome}"
         if self.detail:
             text += f": {self.detail}"
         return text
@@ -95,7 +107,7 @@ class AIControl:
         """Human pressed STOP: revoke control. Sweep stop is done by GUI."""
         self.allow(False, by="STOP")
         self.record(LogEntry(time.time(), "STOP", "user", {}, "stopped",
-                             "AI control revoked by user"))
+                             "käyttäjä painoi STOP, AI-ohjaus on pois"))
 
     def begin(self, tool: str) -> None:
         self._active_tool = tool
