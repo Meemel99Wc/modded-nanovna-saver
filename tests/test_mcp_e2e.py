@@ -300,15 +300,28 @@ def test_device_shell_refused_on_other_firmware(saver):
 
 
 def test_device_shell_and_sweep_do_not_mix_replies(saver):
-    _, window, _ = saver
+    """100 device_shell commands with a sweep between every tenth, in ONE client session (as a real client works): every
+    shell reply must be its own command's output, not sweep data. Not a sweep between every command: 50 sweeps (each starts
+    and ends the Qt sweep worker thread) made Python 3.11 abort at interpreter shutdown, after the tests had passed, with a
+    refcount error in a C extension; ten sweeps do not."""
+    qapp, window, svc = saver
     window.mcp.control.allow(True)
     call(saver, "device_connect", {"port": "virtual"})
     call(saver, "sweep_configure", {"start_hz": 3_600_000,
                                     "stop_hz": 30_000_000})
-    text(call(saver, "sweep_run"))  # the stub reports the last sweep range
-    for i in range(100):
-        if i % 2:
-            text(call(saver, "sweep_run"))
-        else:
-            out = text(call(saver, "device_shell", {"command": "sweep"}))
-            assert out["output"] == "3600000 30000000 101", (i, out)
+    cmds = {"sweep": "3600000 30000000 101", "version": "Version 1.0.0\nproto 1.0"}
+
+    async def go():
+        async with Client(svc.server) as c:
+            await c.call_tool("sweep_run", {})   # the stub reports the last sweep range
+            for i in range(100):
+                if i % 10 == 9:
+                    res = await c.call_tool("sweep_run", {})
+                    assert not is_error(res), (i, res.content[0].text)
+                cmd = "sweep" if i % 2 == 0 else "version"
+                res = await c.call_tool("device_shell", {"command": cmd})
+                assert not is_error(res), (i, res.content[0].text)
+                out = json.loads(res.content[0].text)
+                assert out["output"] == cmds[cmd], (i, cmd, out)
+
+    run(qapp, go, timeout=240)
