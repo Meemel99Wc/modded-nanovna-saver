@@ -23,6 +23,9 @@ from .Serial import Interface
 logger = logging.getLogger(__name__)
 
 
+LITEVNA64_MAX_FREQ_HZ = 6300e6
+
+
 class NanoVNA_H4(NanoVNA_H):
     name = "NanoVNA-H4"
     screenwidth = 480
@@ -38,6 +41,19 @@ class NanoVNA_H4(NanoVNA_H):
     def __init__(self, iface: Interface):
         super().__init__(iface)
         self.sweep_max_freq_hz = 1500e6
+        if self._is_litevna64_firmware():
+            # Missing Link firmware (litevna-openvna) answers as
+            # "NanoVNA-H 4 compatible, LiteVNA64 hardware"; the hardware
+            # sweeps up to 6.3 GHz. Real NanoVNA-H 4 stays at 1.5 GHz.
+            self.sweep_max_freq_hz = LITEVNA64_MAX_FREQ_HZ
         self.sweep_method = "scan"
         if "Scan mask command" in self.features:
             self.sweep_method = "scan_mask"
+
+    def _is_litevna64_firmware(self) -> bool:
+        try:
+            info = " ".join(self.exec_command("info"))
+        except Exception:  # serial trouble: keep the safe 1.5 GHz limit
+            logger.warning("Could not read info for LiteVNA64 detection")
+            return False
+        return "LiteVNA64" in info
