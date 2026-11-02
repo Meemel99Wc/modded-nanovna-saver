@@ -27,6 +27,8 @@ reads, so it says what the action does, the units and what it returns.
 Do not add GUI dialogs here: everything must work headless.
 """
 
+import bisect
+import cmath
 import logging
 import math
 from concurrent.futures import Future
@@ -105,6 +107,36 @@ def _point(dp: Datapoint, parameter: str) -> dict[str, Any]:
         out["r_ohm"] = _round(z.real, 2)
         out["x_ohm"] = _round(z.imag, 2)
     return out
+
+
+def _interp_point(data: list[Datapoint], freq_hz: float) -> tuple[Datapoint, float, bool]:
+    """Value of a sweep at freq_hz: the measured point if one is there, else interpolated between the two measured points
+    around it (log magnitude, i.e. linear in dB, and phase along the shorter way round). Returns (point, step_hz, interpolated)
+    where step_hz is the spacing of the two points used. Raises ActionError outside the sweep: the nearest edge point would
+    be the wrong frequency."""
+    pts = sorted(data, key=lambda d: d.freq)
+    lo_f, hi_f = pts[0].freq, pts[-1].freq
+    if not lo_f <= freq_hz <= hi_f:
+        raise ActionError(
+            f"Taajuus {freq_hz:.0f} Hz on pyyhkäisyn ({lo_f}–{hi_f} Hz) ulkopuolella. "
+            "Aseta pyyhkäisy kattamaan se (mieluiten kapeasti sen ympärille) ja aja sweep_run."
+        )
+    k = bisect.bisect_left([d.freq for d in pts], freq_hz)
+    if pts[k].freq == freq_hz:
+        step = pts[k].freq - pts[k - 1].freq if k > 0 else (pts[1].freq - pts[0].freq if len(pts) > 1 else 0)
+        return pts[k], float(step), False
+    d0, d1 = pts[k - 1], pts[k]
+    t = (freq_hz - d0.freq) / (d1.freq - d0.freq)
+    z0, z1 = complex(d0.re, d0.im), complex(d1.re, d1.im)
+    m0, m1 = abs(z0), abs(z1)
+    if m0 > 0 and m1 > 0:
+        mag = m0 * (m1 / m0) ** t
+        dphi = math.atan2(math.sin(math.atan2(z1.imag, z1.real) - math.atan2(z0.imag, z0.real)),
+                          math.cos(math.atan2(z1.imag, z1.real) - math.atan2(z0.imag, z0.real)))
+        z = cmath.rect(mag, math.atan2(z0.imag, z0.real) + t * dphi)
+    else:
+        z = z0 + t * (z1 - z0)
+    return Datapoint(round(freq_hz), z.real, z.imag), float(d1.freq - d0.freq), True
 
 
 def _ranges_below(data: list[Datapoint], limit: float) -> list[dict]:
@@ -743,24 +775,37 @@ class SaverAPI:
         freq_hz: int,
         parameter: Literal["s11", "s21", "both"] = "both",
     ) -> dict:
-        """Value at ONE frequency: the nearest MEASURED point to freq_hz
-        (no interpolation), so the sweep must cover freq_hz. Use
-        parameter="s21" for filter gain/attenuation (returns only S21,
-        its "db" is the gain) and "s11" for reflection; "both" returns
-        S21 first, then S11. The min_gain/max_gain of sweep_run and
-        data_summary are whole-sweep extremes, not this."""
+        """Value at ONE frequency, interpolated between the two measured
+        points around freq_hz (dB and phase), so it does not depend on
+        where the sweep points happen to fall. Errors if freq_hz is
+        outside the sweep: sweep a range that contains it first. Each
+        value has interpolated (false if a point is exactly there) and
+        step_hz, the spacing of the points used: if the curve changes a
+        lot over one step (filter edge, resonance) narrow the sweep
+        around freq_hz for a more exact value. Use parameter="s21" for
+        filter gain/attenuation (its "db" is the gain) and "s11" for
+        reflection; "both" returns S21 first, then S11. The min_gain /
+        max_gain of sweep_run and data_summary are whole-sweep extremes,
+        not this."""
         s11, s21 = self._data()
         if not s11:
             raise ActionError("Ei mittausdataa. Aja sweep_run ensin.")
-        i = min(range(len(s11)), key=lambda k: abs(s11[k].freq - freq_hz))
         out: dict[str, Any] = {}
         if parameter in ("s21", "both"):
-            if i < len(s21):
-                out["s21"] = _point(s21[i], "s21")
+            if s21:
+                out["s21"] = self._value_at(s21, freq_hz, "s21")
             elif parameter == "s21":
                 raise ActionError("Ei S21-dataa tässä pyyhkäisyssä.")
         if parameter in ("s11", "both"):
-            out["s11"] = _point(s11[i], "s11")
+            out["s11"] = self._value_at(s11, freq_hz, "s11")
+        return out
+
+    @staticmethod
+    def _value_at(data: list[Datapoint], freq_hz: float, parameter: str) -> dict:
+        dp, step, interpolated = _interp_point(data, freq_hz)
+        out = _point(dp, parameter)
+        out["interpolated"] = interpolated
+        out["step_hz"] = step
         return out
 
     @action("reference_set", risk=Risk.ACT, category="data",

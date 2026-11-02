@@ -94,7 +94,7 @@ Ryhmät:
   `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`, `device_screenshot`
 - **sweep**: `sweep_get`, `sweep_configure`, `band_list`, `sweep_set_band`,
   `sweep_set_attenuator`, `sweep_run`, `sweep_stop`, `sweep_segmented`
-- **data**: `data_summary`, `data_points`, `data_at`, `reference_set`, `reference_reset`
+- **data**: `data_summary`, `data_points`, `data_at` (arvo yhdellä taajuudella, interpoloitu mitattujen pisteiden välillä; virhe, jos taajuus on pyyhkäisyn ulkopuolella), `reference_set`, `reference_reset`
 - **markers**: `marker_list`, `marker_set`, `marker_add`, `marker_remove`
 - **analysis**: `analysis_list`, `analysis_run`, `tdr_result`
 - **charts**: `chart_list`, `chart_image` (PNG)
