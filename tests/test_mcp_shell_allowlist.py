@@ -11,10 +11,11 @@ from NanoVNASaver.MCP.shell_allowlist import (
 )
 
 READ = ["version", "info", "sweep-stats", "sd stats", "cal why",
-        "msc log", "usb status", "sweep", "ref show", "power", "  version  "]
+        "msc log", "usb status", "sweep", "ref show", "power", "s21", "  version  "]
 ACT = ["input key 4f 00 down", "input ptr 100 -20 move", "input wheel -3",
        "sweep 50000000 1500000000 201", "sweep 1000000 2000000",
-       "sweep-avg 16", "ref on", "power lo 2", "cal off", "recall 1"]
+       "sweep-avg 16", "ref on", "power lo 2", "cal off", "recall 1",
+       "s21 on", "s21 off", "s21 norm", "s21 norm clear"]
 PERSIST = ["save 2", "meas save", "meas note Antenna 3 test"]
 NEVER = ["reset", "config-reset", "usb mode storage force", "usb reset",
          "sd read 0", "sd cs PB 9", "pin mode PA 6 1", "rf set 1 1 1 1 1",

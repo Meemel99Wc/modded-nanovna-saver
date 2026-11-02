@@ -125,7 +125,7 @@ hylätään, samoin `;`, `|`, `&`, rivinvaihdot ja muut erikoismerkit.
 | työkalu | riski | esimerkkejä |
 |---|---|---|
 | `device_shell` | read | `version`, `info`, `sweep-stats`, `sd stats`, `cal why`, `msc log`, `usb status`, `sweep`, `power` |
-| `device_shell_act` | act (AI-ohjaus sallittu) | `input key 4f 00 down`, `sweep 50000000 1500000000 201`, `sweep-avg 4`, `ref on`, `power 2`, `cal on`, `recall 1` |
+| `device_shell_act` | act (AI-ohjaus sallittu) | `input key 4f 00 down`, `sweep 50000000 1500000000 201`, `sweep-avg 4`, `ref on`, `s21 on`, `s21 norm`, `power 2`, `cal on`, `recall 1` |
 | `device_shell_persist` | persist (käyttäjä kuittaa joka kerta) | `save 2` (ylikirjoittaa kalibrointislotin), `meas save`, `meas note <teksti>` |
 
 - Työkalu hylkää komennon, jos se kuuluu toiseen luokkaan, ja kertoo oikean työkalun nimen.
