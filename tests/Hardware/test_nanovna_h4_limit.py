@@ -18,8 +18,10 @@ def make(info: str):
 def test_litevna64_firmware_gets_6_3_ghz():
     vna = make("Board: ZN406-VNA (NanoVNA-H 4 compatible, LiteVNA64 hardware)")
     assert vna.sweep_max_freq_hz == 6300e6
+    assert vna.sweep_points_max == 401
 
 
 def test_real_nanovna_h4_stays_at_1_5_ghz():
     vna = make("NanoVNA-H 4\nVersion: 1.2.3")
     assert vna.sweep_max_freq_hz == 1500e6
+    assert vna.sweep_points_max != 401

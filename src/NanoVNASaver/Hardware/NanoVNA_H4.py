@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 LITEVNA64_MAX_FREQ_HZ = 6300e6
+LITEVNA64_MAX_POINTS = 401     # SWEEP_POINTS_MAX of the firmware; the driver default of 101 blocked 201/401 in MCP
 
 
 class NanoVNA_H4(NanoVNA_H):
@@ -44,8 +45,9 @@ class NanoVNA_H4(NanoVNA_H):
         if self._is_litevna64_firmware():
             # Missing Link firmware (litevna-openvna) answers as
             # "NanoVNA-H 4 compatible, LiteVNA64 hardware"; the hardware
-            # sweeps up to 6.3 GHz. Real NanoVNA-H 4 stays at 1.5 GHz.
+            # sweeps up to 6.3 GHz and 401 points. Real NanoVNA-H 4 stays at 1.5 GHz.
             self.sweep_max_freq_hz = LITEVNA64_MAX_FREQ_HZ
+            self.sweep_points_max = LITEVNA64_MAX_POINTS
         self.sweep_method = "scan"
         if "Scan mask command" in self.features:
             self.sweep_method = "scan_mask"
