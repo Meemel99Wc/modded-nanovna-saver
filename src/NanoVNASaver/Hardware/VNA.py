@@ -43,11 +43,17 @@ DISLORD_BW = {
 WAIT = 0.05
 
 
+# Each retry waits about 0.1 s. The LiteVNA64 firmware (IF=12kHz) needs
+# ~5 s to answer "data 0" for a 101 point sweep, longer for wider ones.
+SLOW_FIRMWARE_RETRIES = 160
+
+
 def _max_retries(bandwidth: int, datapoints: int) -> int:
     return round(
         20
         + 20 * (datapoints / 101)
         + (1000 / bandwidth) ** 1.30 * (datapoints / 101)
+        + SLOW_FIRMWARE_RETRIES
     )
 
 
