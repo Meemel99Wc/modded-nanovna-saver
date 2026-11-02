@@ -87,11 +87,12 @@ python -m NanoVNASaver --virtual --mcp http --mcp-allow
 
 ## Mitä mallilla on käytössä
 
-**Työkalut** (41) generoidaan toimintorekisteristä (`src/NanoVNASaver/MCP/api.py`, `@action`).
+**Työkalut** (44) generoidaan toimintorekisteristä (`src/NanoVNASaver/MCP/api.py`, `@action`).
 Ryhmät:
 
 - **device**: `device_list_ports`, `device_connect`, `device_disconnect`, `device_info`,
-  `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`, `device_screenshot`
+  `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`, `device_screenshot`,
+  `device_shell`, `device_shell_act`, `device_shell_persist` (ks. alla)
 - **sweep**: `sweep_get`, `sweep_configure`, `band_list`, `sweep_set_band`,
   `sweep_set_attenuator`, `sweep_run`, `sweep_stop`, `sweep_segmented`
 - **data**: `data_summary`, `data_points`, `data_at`, `reference_set`, `reference_reset`
@@ -112,6 +113,27 @@ Täysi data on saatavilla **resursseina**, jotta mallin konteksti ei täyty tuha
 
 **Promptit** ovat valmiita mittausreseptejä: `antenna(start_hz, stop_hz)`,
 `filter(start_hz, stop_hz)`, `cable_length`, `compare`.
+
+### Laitteen komentorivi: `device_shell*`
+
+Saver varaa sarjaportin, joten malli ei pääse laiteohjelmiston omiin diagnostiikkakomentoihin
+muuten. Kolme työkalua lähettää **yhden sallitun komennon** jo avattuun porttiin Saverin
+sarjaporttilukon alla. Vapaata komentoriviä ei ole: komennon pitää täsmätä sallittujen listaan
+(`src/NanoVNASaver/MCP/shell_allowlist.py`, jokaisella rivillä on perustelu). Listaamaton komento
+hylätään, samoin `;`, `|`, `&`, rivinvaihdot ja muut erikoismerkit.
+
+| työkalu | riski | esimerkkejä |
+|---|---|---|
+| `device_shell` | read | `version`, `info`, `sweep-stats`, `sd stats`, `cal why`, `msc log`, `usb status`, `sweep`, `power` |
+| `device_shell_act` | act (AI-ohjaus sallittu) | `input key 4f 00 down`, `sweep 50000000 1500000000 201`, `sweep-avg 4`, `ref on`, `power 2`, `cal on`, `recall 1` |
+| `device_shell_persist` | persist (käyttäjä kuittaa joka kerta) | `save 2` (ylikirjoittaa kalibrointislotin), `meas save`, `meas note <teksti>` |
+
+- Työkalu hylkää komennon, jos se kuuluu toiseen luokkaan, ja kertoo oikean työkalun nimen.
+- Toimii vain Missing Linkin laiteohjelmistolla (`version` vastaa `proto 1.x`), ei käynnissä olevan pyyhkäisyn aikana.
+- Ei koskaan: `reset`, `config-reset`, USB-tilan vaihto, `sd read`, rekisteri- ja pinnikomennot, `clk-set`
+  (omistaja päättää, kuuluuko se listaan) ja kalibrointistandardien `cal open|short|load`
+  (käytä `calibration_capture`, joka pyytää ihmistä kytkemään standardin).
+- Vastaus: `{command, output, truncated, error, ms}`; `error` on tosi, jos laite vastasi `?`-rivillä.
 
 ## Kehittäjälle
 

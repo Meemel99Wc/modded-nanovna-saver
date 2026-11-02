@@ -230,3 +230,85 @@ def test_http_requires_token(saver):
         assert run(qapp, go, timeout=30) == (401, 403)
     finally:
         svc.stop_http()
+
+
+def test_device_shell(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    out = text(call(saver, "device_shell", {"command": "version"}))
+    assert "proto 1.0" in out["output"] and out["error"] is False
+    assert out["ms"] >= 0
+    assert text(call(saver, "device_shell", {"command": "sweep"}))["output"]
+
+    # unlisted and wrong-class commands are refused, nothing reaches the device
+    log = window.vna.shell_log
+    before = len(log)
+    for cmd, tool in [("reset", "device_shell"),
+                      ("version; reset", "device_shell"),
+                      ("sweep-avg 3", "device_shell")]:
+        res = call(saver, tool, {"command": cmd})
+        assert is_error(res), cmd
+    assert len(log) == before
+
+    # ACT class needs AI control
+    act = text(call(saver, "device_shell_act", {"command": "sweep-avg 3"}))
+    assert act["output"] == "ok: sweep-avg 3"
+    window.mcp.control.allow(False)
+    denied = call(saver, "device_shell_act", {"command": "sweep-avg 3"})
+    assert is_error(denied)
+    assert "AI-ohjaus ei ole sallittu" in denied.content[0].text
+    # READ works without AI control
+    assert text(call(saver, "device_shell", {"command": "info"}))["output"]
+    window.mcp.control.allow(True)
+
+
+def test_device_shell_persist_asks_user(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    before = len(window.vna.shell_log)
+
+    async def decline(_ctx, _params):
+        return mcp.types.ElicitResult(action="decline")
+
+    res = call(saver, "device_shell_persist", {"command": "save 2"},
+               elicit=decline)
+    assert is_error(res)
+    assert not any(c == "save 2" for c in window.vna.shell_log[before:])
+
+    async def accept(_ctx, params):
+        assert "save 2" in params.message
+        return mcp.types.ElicitResult(action="accept", content={"ok": True})
+
+    out = text(call(saver, "device_shell_persist", {"command": "save 2"},
+                    elicit=accept))
+    assert out["output"] == "ok: save 2"
+
+
+def test_device_shell_refused_on_other_firmware(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    window.vna._mcp_our_firmware = False
+    try:
+        res = call(saver, "device_shell", {"command": "version"})
+        assert is_error(res)
+        assert "Missing Linkin laiteohjelmistolla" in res.content[0].text
+    finally:
+        del window.vna._mcp_our_firmware
+
+
+def test_device_shell_and_sweep_do_not_mix_replies(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    call(saver, "sweep_configure", {"start_hz": 3_600_000,
+                                    "stop_hz": 30_000_000})
+    text(call(saver, "sweep_run"))  # the stub reports the last sweep range
+    for i in range(100):
+        if i % 2:
+            text(call(saver, "sweep_run"))
+        else:
+            out = text(call(saver, "device_shell", {"command": "sweep"}))
+            assert out["output"] == "3600000 30000000 101", (i, out)
