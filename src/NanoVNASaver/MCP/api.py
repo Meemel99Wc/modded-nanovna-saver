@@ -589,8 +589,11 @@ class SaverAPI:
     )
     def sweep_run(self) -> Pending:
         """Run one sweep with the current settings and wait until it is
-        done. Returns a summary of the result (data_summary); use
-        data_points or the saver://sweep resources for the full data."""
+        done. Returns a summary of the result (data_summary). In it
+        min_gain/max_gain are the extremes of the WHOLE sweep, not the
+        value at any given frequency: to read S11/S21 at one frequency
+        use data_at(freq_hz) (the sweep must cover it). Full data:
+        data_points or the saver://sweep resources."""
         return Pending(self._start_sweep(), lambda _: self.data_summary())
 
     @action("sweep_stop", risk=Risk.ACT, category="sweep",
@@ -669,7 +672,9 @@ class SaverAPI:
         """Summary of the current sweep data: range, points, S11 minimum
         VSWR (frequency, return loss, impedance), ranges with VSWR <= 2
         and <= 1.5, series resonances (X = 0), and S21 min/max gain with
-        the -3 dB band around the maximum."""
+        the -3 dB band around the maximum. min_gain/max_gain are the
+        extremes of the whole sweep, not values at a given frequency:
+        for one frequency use data_at(freq_hz)."""
         s11, s21 = self._data()
         out: dict[str, Any] = {
             "source": self.app.sweepSource,
@@ -734,7 +739,10 @@ class SaverAPI:
     @action("data_at", risk=Risk.READ, category="data",
             gui=("Marker: values at marker frequency",))
     def data_at(self, freq_hz: int) -> dict:
-        """S11 and S21 values at the measured point nearest to freq_hz."""
+        """S11 and S21 at one frequency: the nearest MEASURED point to
+        freq_hz (no interpolation), so the sweep must cover freq_hz. Use
+        this for a value at a given frequency; the min_gain/max_gain of
+        sweep_run/data_summary are whole-sweep extremes."""
         s11, s21 = self._data()
         if not s11:
             raise ActionError("Ei mittausdataa. Aja sweep_run ensin.")
