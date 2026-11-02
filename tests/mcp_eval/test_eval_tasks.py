@@ -1,12 +1,13 @@
 """The evaluation's truths and answer parser, without a model."""
 
+import json
 import math
 
 import pytest
 
 from NanoVNASaver.Hardware import VirtualVNA
 
-from .run_eval import score
+from .run_eval import score, summary
 from .tasks import TASKS, parse_answer, tasks_for
 
 
@@ -96,3 +97,19 @@ def test_tolerance():
     assert task.ok(task.truth * 1.009)
     assert not task.ok(task.truth * 1.02)
     assert not task.ok(None)
+
+
+def test_summary_rerun_replaces_error_rows(tmp_path):
+    def row(seed, outcome, ohje="on"):
+        return {"model": "m", "ohje": ohje, "task": "antenni_vswr",
+                "seed": seed, "outcome": outcome, "duration_s": 1.0,
+                "tools": ["sweep_run"], "reason": ""}
+    rows = [row(1000, "pass"), row(1001, "error"), row(1001, "fail"),
+            row(1002, "fail"), row(1002, "error"), row(1000, "error", "off")]
+    path = tmp_path / "eval.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    table = summary(str(path))
+    # 1001 was rerun after its error; 1002's later error does not hide
+    # its earlier result
+    assert "| m | on | antenni_vswr | 1/3 | 0 | 0 |" in table
+    assert "| m | off | antenni_vswr | – | 0 | 1 |" in table

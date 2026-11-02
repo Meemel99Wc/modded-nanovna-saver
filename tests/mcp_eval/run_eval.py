@@ -29,7 +29,11 @@ wrong or not at all) and error (the run itself broke: model server down,
 Saver crashed, timeout), so a broken run is never counted as the
 model's failure or success. A connection error to the model server is
 retried once (the row says so); a timeout is not, since it may be the
-model being slow.
+model being slow. After --max-errors runs in a row end in error the
+remaining runs are not started (the model server is down; measured
+2.11.2026: five hours of timeouts, 99 runs, before the run ended). Rerun
+the same seeds later: `--summary` keeps one row per model, prompt, task
+and seed, the latest that is not an error.
 
 Backends: "ollama" (native /api/chat, sets the context length so all
 tool schemas fit) and "openai" (any OpenAI compatible
@@ -271,8 +275,15 @@ def run(args) -> None:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     lock = threading.Lock()
+    in_a_row = [0]          # runs in a row that ended in error
+    stopped = threading.Event()
+    skipped = [0]
 
     def one(i: int, key: str) -> None:
+        if stopped.is_set():
+            with lock:
+                skipped[0] += 1
+            return
         seed = args.seed + i
         task = tasks_for(seed)[key]
         row = {"model": args.model, "backend": args.backend,
@@ -302,6 +313,11 @@ def run(args) -> None:
         row["duration_s"] = round(time.monotonic() - t0, 1)
         with lock, out.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            in_a_row[0] = in_a_row[0] + 1 if row["outcome"] == "error" else 0
+            if in_a_row[0] >= args.max_errors and not stopped.is_set():
+                stopped.set()
+                print(f"{in_a_row[0]} virhe-ajoa peräkkäin: loput ajot "
+                      "jätetään aloittamatta", flush=True)
         print(f"{args.model} {key} #{i}: {row['outcome']} "
               f"({row['duration_s']} s)", flush=True)
 
@@ -311,20 +327,32 @@ def run(args) -> None:
     work = [(i, key) for i in range(args.n) for key in keys]
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:
         list(pool.map(lambda w: one(*w), work))
+    if stopped.is_set():
+        print(f"keskeytetty: {skipped[0]} ajoa aloittamatta", flush=True)
+        raise SystemExit(2)
 
 
 def summary(path: str) -> str:
     rows = [json.loads(line) for line in Path(path).read_text(
         encoding="utf-8").splitlines() if line.strip()]
-    groups = defaultdict(list)
+    # A rerun of the same seed replaces the earlier row: the latest row
+    # that is not an error, else the latest error.
+    latest = {}
     for r in rows:
-        groups[(r["model"], r["task"])].append(r)
+        key = (r["model"], r.get("ohje", "-"), r["task"], r.get("seed"))
+        old = latest.get(key)
+        if old is None or r["outcome"] != "error" or \
+                old["outcome"] == "error":
+            latest[key] = r
+    groups = defaultdict(list)
+    for r in latest.values():
+        groups[(r["model"], r.get("ohje", "-"), r["task"])].append(r)
     lines = [
-        "| malli | tehtävä | onnistui | arvaus osui | virhe-ajot | "
+        "| malli | ohje | tehtävä | onnistui | arvaus osui | virhe-ajot | "
         "mediaani s | työkalukutsuja (ka) |",
-        "|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|",
     ]
-    for (model, task), rs in sorted(groups.items()):
+    for (model, ohje, task), rs in sorted(groups.items()):
         ok = [r for r in rs if r["outcome"] != "error"]
         passed = sum(r["outcome"] == "pass" for r in ok)
         # rows from before the measurement rule have no "reason"
@@ -335,7 +363,8 @@ def summary(path: str) -> str:
         dur = statistics.median(r["duration_s"] for r in rs)
         calls = (statistics.mean(len(r["tools"]) for r in ok)
                  if ok else float("nan"))
-        lines.append(f"| {model} | {task} | {rate} | {guessed} | {errors} | "
+        lines.append(f"| {model} | {ohje} | {task} | {rate} | {guessed} | "
+                     f"{errors} | "
                      f"{dur:.0f} | {calls:.1f} |")
     return "\n".join(lines)
 
@@ -361,6 +390,8 @@ def main() -> None:
                    help="run i simulates the device drawn from seed + i")
     p.add_argument("--ohje", choices=("on", "off"), default="on",
                    help='"measure, do not guess" in the system prompt')
+    p.add_argument("--max-errors", type=int, default=6,
+                   help="stop starting runs after this many errors in a row")
     p.add_argument("--out", default="mcp_eval_results.jsonl")
     p.add_argument("--summary", metavar="JSONL")
     args = p.parse_args()
