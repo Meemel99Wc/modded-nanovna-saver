@@ -108,6 +108,11 @@ def test_act_needs_permission(saver):
     result = call(saver, "sweep_configure", {"start_hz": 1_000_000})
     assert is_error(result)
     assert "AI-ohjaus ei ole sallittu" in result.content[0].text
+    # panel log line is Finnish and says the same as the error message,
+    # the machine-readable outcome stays as it is
+    entry = window.mcp.control.entries[-1]
+    assert entry.outcome == "denied"
+    assert entry.line().endswith("-> estetty: AI-ohjaus ei ole sallittu")
     # reading still works
     assert "start_hz" in text(call(saver, "sweep_get"))
 
@@ -200,6 +205,12 @@ def test_stop_revokes_control(saver):
     result = call(saver, "sweep_run")
     assert is_error(result)
     assert window.mcp.control.entries[-1].outcome == "denied"
+    stop = next(e for e in reversed(window.mcp.control.entries)
+                if e.tool == "STOP")
+    assert stop.outcome == "stopped"
+    assert stop.line().endswith(
+        "STOP() -> pysäytetty: käyttäjä painoi STOP, AI-ohjaus on pois"
+    )
 
 
 
