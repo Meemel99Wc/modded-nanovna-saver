@@ -127,6 +127,51 @@ def _ranges_below(data: list[Datapoint], limit: float) -> list[dict]:
     ]
 
 
+def _crossing(f0: float, g0: float, f1: float, g1: float, level: float) -> int:
+    """Frequency where gain crosses level between two points (linear
+    interpolation of dB over frequency)."""
+    frac = (level - g0) / (g1 - g0) if g1 != g0 else 0.0
+    return round(f0 + frac * (f1 - f0))
+
+
+def _minus_3db_band(data: list[Datapoint], drop_db: float = 3.0) -> dict:
+    """-3 dB band: the contiguous region around the gain maximum where
+    gain >= max - drop_db. Other peaks outside that region are ignored.
+
+    Edges are linearly interpolated to the -3 dB crossing. If the band
+    runs into the end of the sweep, that edge is not known: start_hz or
+    stop_hz is None and open_low / open_high is True; bandwidth_hz and
+    center_hz are then None too. center_hz is the geometric mean
+    sqrt(f1 * f2) of the edges."""
+    gains = [d.gain for d in data]
+    peak = max(range(len(gains)), key=lambda i: gains[i])
+    level = gains[peak] - drop_db
+    lo = peak
+    while lo > 0 and gains[lo - 1] >= level:
+        lo -= 1
+    hi = peak
+    while hi < len(gains) - 1 and gains[hi + 1] >= level:
+        hi += 1
+    open_low = lo == 0
+    open_high = hi == len(gains) - 1
+    start = None if open_low else _crossing(
+        data[lo - 1].freq, gains[lo - 1], data[lo].freq, gains[lo], level
+    )
+    stop = None if open_high else _crossing(
+        data[hi].freq, gains[hi], data[hi + 1].freq, gains[hi + 1], level
+    )
+    closed = start is not None and stop is not None
+    return {
+        "start_hz": start,
+        "stop_hz": stop,
+        "bandwidth_hz": stop - start if closed else None,
+        "center_hz": round(math.sqrt(start * stop)) if closed else None,
+        "edges_interpolated": True,
+        "open_low": open_low,
+        "open_high": open_high,
+    }
+
+
 def _resonances(data: list[Datapoint]) -> list[dict]:
     """Series resonances: reactance crosses zero going up."""
     out = []
@@ -668,8 +713,13 @@ class SaverAPI:
     def data_summary(self) -> dict:
         """Summary of the current sweep data: range, points, S11 minimum
         VSWR (frequency, return loss, impedance), ranges with VSWR <= 2
-        and <= 1.5, series resonances (X = 0), and S21 min/max gain with
-        the -3 dB band around the maximum."""
+        and <= 1.5 (each with bandwidth_hz), series resonances (X = 0),
+        and S21 min/max gain with the -3 dB band (s21.minus_3db): the
+        contiguous region around the maximum, edges linearly
+        interpolated to the -3 dB crossing, with bandwidth_hz and
+        center_hz = sqrt(start_hz * stop_hz) (geometric mean). If the
+        band reaches the sweep end, open_low/open_high is true and that
+        edge (and bandwidth_hz, center_hz) is null: widen the sweep."""
         s11, s21 = self._data()
         out: dict[str, Any] = {
             "source": self.app.sweepSource,
@@ -688,11 +738,10 @@ class SaverAPI:
         if s21 and any(d.re or d.im for d in s21):
             lo = min(s21, key=lambda d: d.gain)
             hi = max(s21, key=lambda d: d.gain)
-            band = [d.freq for d in s21 if d.gain >= hi.gain - 3]
             out["s21"] = {
                 "min_gain": _point(lo, "s21"),
                 "max_gain": _point(hi, "s21"),
-                "minus_3db": {"start_hz": band[0], "stop_hz": band[-1]},
+                "minus_3db": _minus_3db_band(s21),
             }
         out["calibrated"] = bool(self.app.calibration.isCalculated)
         if self.app.ref_data.s11:
