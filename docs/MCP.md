@@ -92,7 +92,7 @@ Ryhmät:
 
 - **device**: `device_list_ports`, `device_connect`, `device_disconnect`, `device_info`,
   `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`, `device_screenshot`,
-  `device_shell`, `device_shell_act`, `device_shell_persist` (ks. alla)
+  `device_shell`, `device_shell_act`, `device_shell_persist`, `device_input` (ks. alla)
 - **sweep**: `sweep_get`, `sweep_configure`, `band_list`, `sweep_set_band`,
   `sweep_set_attenuator`, `sweep_run`, `sweep_stop`, `sweep_segmented`
 - **data**: `data_summary`, `data_points`, `data_at`, `reference_set`, `reference_reset`
@@ -125,15 +125,43 @@ hylätään, samoin `;`, `|`, `&`, rivinvaihdot ja muut erikoismerkit.
 | työkalu | riski | esimerkkejä |
 |---|---|---|
 | `device_shell` | read | `version`, `info`, `sweep-stats`, `sd stats`, `cal why`, `msc log`, `usb status`, `sweep`, `power` |
-| `device_shell_act` | act (AI-ohjaus sallittu) | `input key 4f 00 down`, `sweep 50000000 1500000000 201`, `sweep-avg 4`, `ref on`, `s21 on`, `s21 norm`, `power 2`, `cal on`, `recall 1` |
+| `device_shell_act` | act (AI-ohjaus sallittu) | `sweep 50000000 1500000000 201`, `sweep-avg 4`, `ref on`, `s21 on`, `s21 norm`, `power 2`, `cal off`, `recall 1` |
 | `device_shell_persist` | persist (käyttäjä kuittaa joka kerta) | `save 2` (ylikirjoittaa kalibrointislotin), `meas save`, `meas note <teksti>` |
 
 - Työkalu hylkää komennon, jos se kuuluu toiseen luokkaan, ja kertoo oikean työkalun nimen.
 - Toimii vain Missing Linkin laiteohjelmistolla (`version` vastaa `proto 1.x`), ei käynnissä olevan pyyhkäisyn aikana.
-- Ei koskaan: `reset`, `config-reset`, USB-tilan vaihto, `sd read`, rekisteri- ja pinnikomennot, `clk-set`
+- Ei koskaan `device_shell`-työkaluilla: `reset`, `config-reset`, USB-tilan vaihto, `sd read`, rekisteri- ja pinnikomennot, `clk-set`
   (omistaja päättää, kuuluuko se listaan) ja kalibrointistandardien `cal open|short|load`
   (käytä `calibration_capture`, joka pyytää ihmistä kytkemään standardin).
 - Vastaus: `{command, output, truncated, error, ms}`; `error` on tosi, jos laite vastasi `?`-rivillä.
+- `cal on` ei ole listalla: laiteohjelmisto asettaa lipun tarkistamatta, että voimassa oleva kalibrointi on olemassa
+  (litevna-openvna#144). `cal off` ja `recall <0-4>` riittävät.
+- Painike-, kosketus- ja rulla-tapahtumat (`input key|ptr|wheel`) eivät ole `device_shell`-komentoja. Ne lähetetään
+  erillisellä työkalulla `device_input` (ks. alla).
+
+### Laitteen käyttöliittymän ohjaus: `device_input`
+
+`device_input` lähettää **yhden syötetapahtuman** laitteen omalle käyttöliittymälle: `input key <hex> <hex> up|down`
+(HID-käyttökoodi ja muokkaimet; `input key 28 00 down` ja `... up` on SELECT, `4f` = oikea, `50` = vasen),
+`input ptr <x> <y> down|up|move` (kosketus, näyttö 480x320) ja `input wheel <n>`. Muut komennot hylätään.
+
+**Tärkeää: käyttöliittymän kautta pääsee kaikkeen, mitä laitteen valikko tekee.** Siihen kuuluvat myös asiat,
+jotka `device_shell`-lista sulkee pois: DFU-tilaan siirtyminen (bootloader), kalibroinnin tallennus flashiin ja
+USB-tilan vaihto. **Storage-tila poistaa laitteen COM-portin**, jolloin Saver menettää laitteen eikä malli pääse
+takaisin: paluu vaatii ihmisen laitteen valikossa (USB → Control).
+
+Siksi `device_input` vaatii kaksi lupaa:
+
+1. **AI-ohjaus sallittu** (kuten muutkin ACT-toiminnot).
+2. **Erillinen lupa "Salli tekoälyn ohjata laitteen käyttöliittymää"**, jonka käyttäjä antaa Saverin AI (MCP) -paneelista
+   **kerran per laiteyhteys**. Lupa ei seuraa AI-ohjauksesta. Se raukeaa, kun yhteys katkeaa tai laite kytketään uudelleen,
+   kun AI-ohjaus otetaan pois ja kun käyttäjä painaa STOP. Sitä ei voi antaa ilman AI-ohjausta tai kytkettyä laitetta.
+   Headless-tilassa lupaa ei anneta automaattisesti: `--mcp-allow` koskee vain AI-ohjausta.
+
+Kun lupa on voimassa, paneelissa näkyy koko ajan punainen teksti "LAITTEEN KÄYTTÖLIITTYMÄN OHJAUS PÄÄLLÄ". Ilman lupaa
+`device_input` hylätään (loki: `denied`) eikä laitteelle lähetetä mitään. Jokainen syötetapahtuma kirjataan AI-lokiin kuten
+muutkin toiminnot, ja luvan antaminen ja raukeaminen kirjataan riveillä `ui_control`.
+
 
 ## Kehittäjälle
 

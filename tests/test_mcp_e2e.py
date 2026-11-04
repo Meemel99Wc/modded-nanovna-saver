@@ -279,6 +279,7 @@ def test_device_shell_persist_asks_user(saver):
 
     async def accept(_ctx, params):
         assert "save 2" in params.message
+        assert "overwrites" in params.message  # the rule's own reason
         return mcp.types.ElicitResult(action="accept", content={"ok": True})
 
     out = text(call(saver, "device_shell_persist", {"command": "save 2"},
@@ -325,3 +326,72 @@ def test_device_shell_and_sweep_do_not_mix_replies(saver):
                 assert out["output"] == cmds[cmd], (i, cmd, out)
 
     run(qapp, go, timeout=240)
+
+
+def test_device_input_needs_the_separate_ui_permission(saver):
+    _, window, _ = saver
+    ctl = window.mcp.control
+    ctl.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    ctl.allow_input(False)
+    log = window.vna.shell_log
+    before = len(log)
+    res = call(saver, "device_input", {"command": "input key 28 00 down"})
+    assert is_error(res)
+    assert "käyttöliittymän ohjaus ei ole sallittu" in res.content[0].text
+    assert len(log) == before                      # nothing reached the device
+    assert ctl.entries[-1].outcome == "denied"
+    # the shell tools do not take input events either
+    res = call(saver, "device_shell_act", {"command": "input key 28 00 down"})
+    assert is_error(res) and "device_input" in res.content[0].text
+    assert len(log) == before
+
+
+def test_device_input_works_with_permission_and_is_logged(saver):
+    _, window, _ = saver
+    ctl = window.mcp.control
+    ctl.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    assert ctl.allow_input(True)
+    # the first shell call also probes the firmware ("version"): do it before counting
+    call(saver, "device_shell", {"command": "version"})
+    log = window.vna.shell_log
+    before = len(log)
+    out = text(call(saver, "device_input", {"command": "input key 28 00 down"}))
+    assert out["output"] == "ok: input key 28 00 down"
+    text(call(saver, "device_input", {"command": "input key 28 00 up"}))
+    assert log[before:] == ["input key 28 00 down", "input key 28 00 up"]
+    logged = [e for e in ctl.entries if e.tool == "device_input"]
+    assert [e.outcome for e in logged[-2:]] == ["ok", "ok"]
+    # only input events: other commands are refused and not sent
+    before = len(log)
+    for cmd in ("reset", "version", "sweep-avg 3", "input key 28 00 down; reset"):
+        assert is_error(call(saver, "device_input", {"command": cmd})), cmd
+    assert len(log) == before
+
+
+def test_device_input_permission_ends_on_stop_and_on_reconnect(saver):
+    _, window, _ = saver
+    ctl = window.mcp.control
+    ctl.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    assert ctl.allow_input(True)
+    ctl.stop()                                     # STOP revokes both
+    ctl.allow(True)
+    assert not ctl.input_allowed
+    res = call(saver, "device_input", {"command": "input key 28 00 down"})
+    assert is_error(res)
+    # a dropped or new connection ends it: disconnect, reconnect, still denied
+    assert ctl.allow_input(True)
+    call(saver, "device_disconnect")
+    assert not ctl.input_allowed
+    call(saver, "device_connect", {"port": "virtual"})
+    assert not ctl.input_allowed                   # must be granted again
+    before = len(window.vna.shell_log)
+    res = call(saver, "device_input", {"command": "input key 28 00 down"})
+    assert is_error(res)
+    assert len(window.vna.shell_log) == before
+    assert any("connection changed" in e.detail for e in ctl.entries
+               if e.tool == "ui_control")
+    assert ctl.allow_input(True)                   # granting again works
+

@@ -184,6 +184,11 @@ class SaverMCP:
             Risk.ACT: "Needs AI control allowed in Saver.",
             Risk.PERSIST: "Writes a file; asks the user every time.",
         }[act.risk]
+        if act.ui_permission:
+            risk_text += (
+                " Also needs the separate UI-control permission the user "
+                "grants for this device connection."
+            )
         self.server.add_tool(
             tool,
             name=act.name,
@@ -277,6 +282,15 @@ class SaverMCP:
                 "AI-ohjaus ei ole sallittu. Pyydä käyttäjää sallimaan "
                 "AI-ohjaus Saverin AI (MCP) -paneelista."
             )
+        if act.ui_permission and not self.control.input_allowed:
+            log("denied", "UI control not allowed")
+            raise Refused(
+                "Laitteen käyttöliittymän ohjaus ei ole sallittu. Pyydä "
+                "käyttäjää sallimaan 'Salli tekoälyn ohjata laitteen "
+                "käyttöliittymää' Saverin AI (MCP) -paneelista. Lupa on "
+                "voimassa vain nykyiselle laiteyhteydelle ja raukeaa "
+                "yhteyden katketessa tai STOPilla."
+            )
         if self._act_lock is None:
             self._act_lock = asyncio.Lock()
         lock = self._act_lock if act.risk is not Risk.READ else None
@@ -306,8 +320,10 @@ class SaverMCP:
                     f"{act.name} ei valmistunut {act.timeout:.0f} s:ssa; "
                     "pyyhkäisy pysäytettiin."
                 ) from None
-            if not self.control.allowed and act.risk is not Risk.READ:
-                log("stopped", "user pressed STOP")
+            if (not self.control.allowed and act.risk is not Risk.READ) or (
+                act.ui_permission and not self.control.input_allowed
+            ):
+                log("stopped", "user pressed STOP or the connection changed")
                 raise Refused("Käyttäjä painoi STOP. AI-ohjaus on pois.")
         except (ActionError, ValueError) as exc:
             log("error", str(exc))

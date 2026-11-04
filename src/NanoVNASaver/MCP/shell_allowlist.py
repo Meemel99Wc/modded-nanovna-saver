@@ -24,6 +24,14 @@ other actions) and a reason. A command that matches no rule is refused.
 
 This module does not import Qt so that it can be tested without a display.
 
+Input events (`input key|ptr|wheel`) are NOT device_shell commands: they
+drive the device's own menus, which can do everything the shell list
+excludes (DFU, saving a calibration, USB mode). They live in INPUT_RULES
+and are sent by the separate device_input tool, which needs its own
+permission (AIControl.input_allowed). `cal on` is not listed either: the
+firmware sets the flag without checking that a valid calibration exists
+(litevna-openvna#144); `cal off` and `recall` are enough.
+
 Deliberately NOT here (refused because unlisted): anything that flashes or
 reboots (`reset`, `config-reset`, bootloader and DFU commands), changes
 the USB mode or the SD card (`usb ...`, `sd read|cs|...`, `fs`), writes
@@ -90,9 +98,6 @@ RULES: tuple[ShellRule, ...] = (
     _r(r"vbat", R, "battery voltage"),
     _r(r"time", R, "RTC time"),
     # ---- ACT: changes the running session, gone after reset
-    _r(rf"input key {_HEX} {_HEX} (up|down)", A, "press/release a key"),
-    _r(rf"input ptr {_INT} {_INT} (down|up|move)", A, "pointer event"),
-    _r(rf"input wheel {_INT}", A, "wheel event"),
     _r(rf"sweep {_UINT} {_UINT}( {_UINT})?", A, "set sweep range"),
     _r(r"sweep-avg ([1-9]|1[0-6])", A, "set averaging"),
     _r(r"sweep-settle \d{2,4}", A, "set PLL settle (firmware clamps)"),
@@ -100,13 +105,22 @@ RULES: tuple[ShellRule, ...] = (
     _r(r"s21 (on|off|norm|norm clear)", A,
        "S21 measurement; norm = sweep once as THRU baseline (RAM only)"),
     _r(r"power( lo)? [0-3]", A, "set output power"),
-    _r(r"cal (on|off)", A, "apply or bypass calibration"),
+    _r(r"cal off", A, "bypass calibration (`cal on` is not listed: litevna-openvna#144)"),
     _r(rf"recall {_SLOT}", A, "load a calibration slot into RAM"),
     # ---- PERSIST: writes flash or the SD card, human confirms
     _r(rf"save {_SLOT}", P, "write calibration to flash slot (overwrites)"),
     _r(r"meas save", P, "write the sweep as .s1p to the SD card"),
     _r(rf"meas (antenna|test|operator|note) {_TEXT}", P,
        "set measurement name (stored in flash config)"),
+)
+
+
+# Events for the device's own user interface (device_input). Same character
+# rules as the shell; sent only with the separate UI-control permission.
+INPUT_RULES: tuple[ShellRule, ...] = (
+    _r(rf"input key {_HEX} {_HEX} (up|down)", A, "press/release a key"),
+    _r(rf"input ptr {_INT} {_INT} (down|up|move)", A, "pointer event"),
+    _r(rf"input wheel {_INT}", A, "wheel event"),
 )
 
 
@@ -134,6 +148,11 @@ def classify(command: str) -> tuple[str, ShellRule]:
     for rule in RULES:
         if rule.pattern.fullmatch(cmd):
             return cmd, rule
+    if any(r.pattern.fullmatch(cmd) for r in INPUT_RULES):
+        raise ShellRefused(
+            f"Komento '{cmd}' kuuluu työkaluun device_input "
+            "(vaatii käyttäjän erillisen luvan laitteen käyttöliittymän ohjaukseen)."
+        )
     raise ShellRefused(
         f"Komento '{cmd}' ei ole sallittujen listalla. "
         "Sallitut komennot: katso docs/MCP.md (device_shell)."
@@ -157,3 +176,30 @@ def check(command: str, risk: Risk) -> str:
 def allowed_commands(risk: Risk) -> list[str]:
     """Rule patterns of one class, for the tool description."""
     return [r.pattern.pattern for r in RULES if r.risk is risk]
+
+
+def check_input(command: str) -> str:
+    """Normalized input event if it is one of INPUT_RULES, else ShellRefused."""
+    cmd = normalize(command)
+    for rule in INPUT_RULES:
+        if rule.pattern.fullmatch(cmd):
+            return cmd
+    raise ShellRefused(
+        f"Komento '{cmd}' ei ole syötetapahtuma. device_input hyväksyy vain: "
+        "input key <hex> <hex> up|down, input ptr <x> <y> down|up|move, "
+        "input wheel <n>."
+    )
+
+
+def confirm_text(command: str) -> str:
+    """Text for the user before a PERSIST command: names the rule's own
+    reason, so the user sees what is being confirmed."""
+    try:
+        cmd, rule = classify(command)
+        reason = rule.reason
+    except ShellRefused:
+        cmd, reason = " ".join(command.split()), "kirjoittaa laitteen flash-muistiin tai SD-kortille"
+    return (
+        f"Tekoäly haluaa lähettää laitteelle komennon: {cmd}. "
+        f"Mitä se tekee: {reason}. Sallitaanko?"
+    )

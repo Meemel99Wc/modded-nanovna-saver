@@ -87,11 +87,7 @@ def _confirm_standard(standard: str, **_: Any) -> str:
 
 
 def _confirm_shell(command: str, **_: Any) -> str:
-    return (
-        f"Tekoäly haluaa lähettää laitteelle komennon: {command}. "
-        "Komento kirjoittaa laitteen flash-muistiin tai SD-kortille. "
-        "Sallitaanko?"
-    )
+    return shell_allowlist.confirm_text(command)
 
 
 MAX_SHELL_OUTPUT = 4000
@@ -402,6 +398,10 @@ class SaverAPI:
             cmd = shell_allowlist.check(command, risk)
         except shell_allowlist.ShellRefused as exc:
             raise ActionError(str(exc)) from exc
+        return self._send(cmd)
+
+    def _send(self, cmd: str) -> dict:
+        """Send one already validated command to the firmware shell."""
         self._require_device()
         self._require_idle()
         if not self._our_firmware():
@@ -452,12 +452,40 @@ class SaverAPI:
     )
     def device_shell_act(self, command: str) -> dict:
         """Run one allowlisted firmware command that changes the running
-        session only (lost at reset): "input key|ptr|wheel ...", "sweep
-        <start> <stop> [points]", "sweep-avg <1-16>", "sweep-settle <us>",
-        "ref on|off", "power [lo] <0-3>", "cal on|off", "recall <0-4>".
+        session only (lost at reset): "sweep <start> <stop> [points]",
+        "sweep-avg <1-16>", "sweep-settle <us>", "ref on|off", "s21
+        on|off|norm", "power [lo] <0-3>", "cal off", "recall <0-4>".
+        Button, touch and wheel events are NOT here: use device_input.
         Returns {command, output, truncated, error, ms}. Needs AI control
         allowed, the Missing Link firmware and no running sweep."""
         return self._shell(command, Risk.ACT)
+
+    @action(
+        "device_input",
+        risk=Risk.ACT,
+        category="device",
+        gui=("MCP only: no Saver control (the device's own user interface)",),
+        timeout=30.0,
+        ui_permission=True,
+    )
+    def device_input(self, command: str) -> dict:
+        """Send ONE input event to the device's own user interface:
+        "input key <hex> <hex> up|down" (HID usage and modifiers, e.g.
+        "input key 28 00 down" then "... up" is SELECT, 4f = RIGHT, 50 =
+        LEFT), "input ptr <x> <y> down|up|move" (touch, screen 480x320),
+        "input wheel <n>". WARNING: the device menu can do everything the
+        buttons can, including DFU mode, saving a calibration and
+        switching the USB mode; Storage removes the device's COM port, so
+        Saver loses the device and only a human at the device can bring
+        it back. Needs AI control allowed AND the separate UI-control
+        permission the user grants for this device connection (it ends
+        when the connection changes or STOP is pressed). Returns
+        {command, output, truncated, error, ms}."""
+        try:
+            cmd = shell_allowlist.check_input(command)
+        except shell_allowlist.ShellRefused as exc:
+            raise ActionError(str(exc)) from exc
+        return self._send(cmd)
 
     @action(
         "device_shell_persist",
