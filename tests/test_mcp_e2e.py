@@ -198,6 +198,25 @@ def test_calibration_capture_asks_to_connect(saver):
     assert status["standards"]["short"] == 202
 
 
+def test_filter_minus_3db_band(saver):
+    """VirtualVNA band-pass (145 MHz, Q = 8): -3 dB width within 2 %
+    of the model's exact value."""
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    f0, q = VirtualVNA.F_FILTER, VirtualVNA.Q_FILTER
+    x = (10 ** (3 / 20) - 1) ** 0.5 / q
+    f_lo = f0 * (-x + (x * x + 4) ** 0.5) / 2
+    f_hi = f0 * (x + (x * x + 4) ** 0.5) / 2
+    text(call(saver, "sweep_configure",
+              {"start_hz": 100_000_000, "stop_hz": 200_000_000,
+               "segments": 1}))
+    band = text(call(saver, "sweep_run"))["s21"]["minus_3db"]
+    assert band["edges_interpolated"] is True
+    assert not band["open_low"] and not band["open_high"]
+    assert abs(band["bandwidth_hz"] - (f_hi - f_lo)) / (f_hi - f_lo) < 0.02
+    assert abs(band["center_hz"] - f0) / f0 < 0.01
+
+
 def test_stop_revokes_control(saver):
     _, window, _ = saver
     window.mcp.control.allow(True)
