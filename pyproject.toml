@@ -51,6 +51,10 @@ dev = [
   # Testing
   "pytest~=8.3",
   "pytest-cov~=6.0",
+  # tests/test_mcp_e2e.py::test_http_requires_token (401 without token, 403 for a
+  # foreign Origin). mcp 2.x depends on "httpx2", not on "httpx", so the [mcp]
+  # extra does not provide it and the test would be skipped silently.
+  "httpx>=0.27",
   "tox~=4.23",
   "tox-uv~=1.17",
 
