@@ -93,6 +93,6 @@ def test_grant_and_revoke_are_logged_and_listeners_notified():
     ctl.allow_input(True)
     ctl.stop()
     lines = [e.line() for e in ctl.entries if e.tool == "ui_control"]
-    assert any("allowed" in ln for ln in lines)
-    assert any("revoked" in ln and "STOP" in ln for ln in lines)
+    assert any("sallittu" in ln for ln in lines)
+    assert any("päättyi" in ln and "AI-ohjaus otettu pois" in ln for ln in lines)
     assert notified

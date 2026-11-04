@@ -48,6 +48,17 @@ logger = logging.getLogger(__name__)
 
 LOG_KEEP = 500
 
+# Display text for LogEntry.outcome. The outcome values themselves are
+# machine-readable states (tests, eval driver, JSON log): do not translate
+# them, translate only here.
+OUTCOME_TEXT = {
+    "ok": "ok",
+    "denied": "estetty",
+    "error": "virhe",
+    "timeout": "aikakatkaisu",
+    "stopped": "pysäytetty",
+}
+
 
 @dataclass
 class LogEntry:
@@ -62,7 +73,8 @@ class LogEntry:
     def line(self) -> str:
         stamp = time.strftime("%H:%M:%S", time.localtime(self.time))
         args = ", ".join(f"{k}={v!r}" for k, v in self.args.items())
-        text = f"{stamp} {self.tool}({args}) -> {self.outcome}"
+        outcome = OUTCOME_TEXT.get(self.outcome, self.outcome)
+        text = f"{stamp} {self.tool}({args}) -> {outcome}"
         if self.detail:
             text += f": {self.detail}"
         return text
@@ -100,7 +112,7 @@ class AIControl:
             changed = allowed != self._allowed
             self._allowed = allowed
         if not allowed:
-            self._revoke_input(f"AI control revoked by {by}")
+            self._revoke_input("AI-ohjaus otettu pois")
         if changed:
             logger.info("AI control %s by %s", "allowed" if allowed else
                         "revoked", by)
@@ -118,10 +130,10 @@ class AIControl:
             if not self._input_allowed:
                 return False
             if not self._allowed:
-                reason = "AI control is not allowed"
+                reason = "AI-ohjaus ei ole sallittu"
             elif (self._input_conn is None
                   or self.connection() is not self._input_conn):
-                reason = "device connection changed or dropped"
+                reason = "laiteyhteys vaihtui tai katkesi"
         if reason is None:
             return True
         self._revoke_input(reason)
@@ -132,7 +144,7 @@ class AIControl:
         permission. Granting needs AI control allowed and a connected
         device; returns whether the permission is valid afterwards."""
         if not allowed:
-            self._revoke_input(f"revoked by {by}")
+            self._revoke_input("käyttäjä peruutti luvan")
             return False
         conn = self.connection()
         with self._lock:
@@ -144,7 +156,8 @@ class AIControl:
         if changed:
             logger.info("UI control allowed by %s for this connection", by)
             self.record(LogEntry(time.time(), "ui_control", "act", {}, "ok",
-                                 f"UI control allowed by {by} (this connection)"))
+                                 "Käyttöliittymän ohjaus sallittu tälle "
+                                 "laiteyhteydelle"))
         return True
 
     def _revoke_input(self, reason: str) -> None:
@@ -155,13 +168,14 @@ class AIControl:
         if was:
             logger.info("UI control revoked: %s", reason)
             self.record(LogEntry(time.time(), "ui_control", "act", {},
-                                 "stopped", f"UI control revoked: {reason}"))
+                                 "stopped",
+                                 f"Käyttöliittymän ohjauslupa päättyi: {reason}"))
 
     def stop(self) -> None:
         """Human pressed STOP: revoke control. Sweep stop is done by GUI."""
         self.allow(False, by="STOP")
         self.record(LogEntry(time.time(), "STOP", "user", {}, "stopped",
-                             "AI control revoked by user"))
+                             "käyttäjä painoi STOP, AI-ohjaus on pois"))
 
     def begin(self, tool: str) -> None:
         self._active_tool = tool
