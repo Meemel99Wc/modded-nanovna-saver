@@ -272,7 +272,7 @@ class SaverMCP:
             )
 
         if act.risk is not Risk.READ and not self.control.allowed:
-            log("denied", "AI control not allowed")
+            log("denied", "AI-ohjaus ei ole sallittu")
             raise Refused(
                 "AI-ohjaus ei ole sallittu. Pyydä käyttäjää sallimaan "
                 "AI-ohjaus Saverin AI (MCP) -paneelista."
@@ -281,7 +281,7 @@ class SaverMCP:
             self._act_lock = asyncio.Lock()
         lock = self._act_lock if act.risk is not Risk.READ else None
         if lock is not None and lock.locked():
-            log("denied", "another action running")
+            log("denied", "toinen toiminto on käynnissä")
             raise Refused("Toinen toiminto on käynnissä; odota sen valmistumista.")
         try:
             if lock is not None:
@@ -291,7 +291,7 @@ class SaverMCP:
                 if not await self.confirm(
                     ctx, act.confirm(**kwargs), confirmation
                 ):
-                    log("denied", "user declined")
+                    log("denied", "käyttäjä ei hyväksynyt toimintoa")
                     raise Refused("Käyttäjä ei hyväksynyt toimintoa.")
             func = act.func
             api = self.api
@@ -301,13 +301,13 @@ class SaverMCP:
                 )
             except TimeoutError:
                 self.bridge.submit(self.api.app.worker.quit)
-                log("timeout")
+                log("timeout", f"ei valmistunut {act.timeout:.0f} s:ssa")
                 raise Refused(
                     f"{act.name} ei valmistunut {act.timeout:.0f} s:ssa; "
                     "pyyhkäisy pysäytettiin."
                 ) from None
             if not self.control.allowed and act.risk is not Risk.READ:
-                log("stopped", "user pressed STOP")
+                log("stopped", "käyttäjä painoi STOP, AI-ohjaus on pois")
                 raise Refused("Käyttäjä painoi STOP. AI-ohjaus on pois.")
         except (ActionError, ValueError) as exc:
             log("error", str(exc))

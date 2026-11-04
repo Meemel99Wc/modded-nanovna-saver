@@ -108,6 +108,11 @@ def test_act_needs_permission(saver):
     result = call(saver, "sweep_configure", {"start_hz": 1_000_000})
     assert is_error(result)
     assert "AI-ohjaus ei ole sallittu" in result.content[0].text
+    # panel log line is Finnish and says the same as the error message,
+    # the machine-readable outcome stays as it is
+    entry = window.mcp.control.entries[-1]
+    assert entry.outcome == "denied"
+    assert entry.line().endswith("-> estetty: AI-ohjaus ei ole sallittu")
     # reading still works
     assert "start_hz" in text(call(saver, "sweep_get"))
 
@@ -193,6 +198,25 @@ def test_calibration_capture_asks_to_connect(saver):
     assert status["standards"]["short"] == 202
 
 
+def test_filter_minus_3db_band(saver):
+    """VirtualVNA band-pass (145 MHz, Q = 8): -3 dB width within 2 %
+    of the model's exact value."""
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    f0, q = VirtualVNA.F_FILTER, VirtualVNA.Q_FILTER
+    x = (10 ** (3 / 20) - 1) ** 0.5 / q
+    f_lo = f0 * (-x + (x * x + 4) ** 0.5) / 2
+    f_hi = f0 * (x + (x * x + 4) ** 0.5) / 2
+    text(call(saver, "sweep_configure",
+              {"start_hz": 100_000_000, "stop_hz": 200_000_000,
+               "segments": 1}))
+    band = text(call(saver, "sweep_run"))["s21"]["minus_3db"]
+    assert band["edges_interpolated"] is True
+    assert not band["open_low"] and not band["open_high"]
+    assert abs(band["bandwidth_hz"] - (f_hi - f_lo)) / (f_hi - f_lo) < 0.02
+    assert abs(band["center_hz"] - f0) / f0 < 0.01
+
+
 def test_stop_revokes_control(saver):
     _, window, _ = saver
     window.mcp.control.allow(True)
@@ -200,6 +224,12 @@ def test_stop_revokes_control(saver):
     result = call(saver, "sweep_run")
     assert is_error(result)
     assert window.mcp.control.entries[-1].outcome == "denied"
+    stop = next(e for e in reversed(window.mcp.control.entries)
+                if e.tool == "STOP")
+    assert stop.outcome == "stopped"
+    assert stop.line().endswith(
+        "STOP() -> pysäytetty: käyttäjä painoi STOP, AI-ohjaus on pois"
+    )
 
 
 
