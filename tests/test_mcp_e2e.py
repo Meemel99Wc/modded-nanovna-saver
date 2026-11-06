@@ -260,3 +260,29 @@ def test_http_requires_token(saver):
         assert run(qapp, go, timeout=30) == (401, 403)
     finally:
         svc.stop_http()
+
+
+def test_data_at_parameter(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    call(saver, "sweep_configure", {"start_hz": 140_000_000, "stop_hz": 146_000_000})
+    text(call(saver, "sweep_run"))
+    both = text(call(saver, "data_at", {"freq_hz": 143_000_000}))
+    assert list(both)[0] == "s21" and "s11" in both
+    only = text(call(saver, "data_at", {"freq_hz": 143_000_000, "parameter": "s21"}))
+    assert list(only) == ["s21"]
+    assert only["s21"]["db"] == both["s21"]["db"]
+    assert isinstance(both["s21"]["interpolated"], bool) and both["s21"]["step_hz"] > 0
+    # exactly at a measured point: that point, not interpolated
+    pt = text(call(saver, "data_points", {"parameter": "s21", "max_points": 5}))["points"][1]
+    at_pt = text(call(saver, "data_at", {"freq_hz": pt["freq_hz"], "parameter": "s21"}))
+    assert at_pt["s21"]["interpolated"] is False and at_pt["s21"]["db"] == pt["db"]
+    # between two measured points: interpolated, with the spacing of the points used
+    mid = text(call(saver, "data_at", {"freq_hz": 143_030_000, "parameter": "s21"}))
+    assert mid["s21"]["interpolated"] is True and mid["s21"]["freq_hz"] == 143_030_000
+    # outside the sweep: an error that says what to do, not the value of the edge point
+    far = call(saver, "data_at", {"freq_hz": 500_000_000, "parameter": "s21"})
+    assert is_error(far) and "ulkopuolella" in far.content[0].text
+    only11 = text(call(saver, "data_at", {"freq_hz": 143_000_000, "parameter": "s11"}))
+    assert list(only11) == ["s11"]
