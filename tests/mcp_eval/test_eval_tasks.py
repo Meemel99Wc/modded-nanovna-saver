@@ -7,7 +7,7 @@ import pytest
 
 from NanoVNASaver.Hardware import VirtualVNA
 
-from .run_eval import score, summary
+from .run_eval import describe, score, summary
 from .tasks import TASKS, parse_answer, tasks_for
 
 
@@ -113,3 +113,17 @@ def test_summary_rerun_replaces_error_rows(tmp_path):
     # its earlier result
     assert "| m | on | antenni_vswr | 1/3 | 0 | 0 |" in table
     assert "| m | off | antenni_vswr | – | 0 | 1 |" in table
+
+
+class _Group(Exception):
+    """Stands in for the exceptiongroup backport on Python 3.10."""
+
+    def __init__(self, exceptions):
+        super().__init__("unhandled errors in a TaskGroup")
+        self.exceptions = exceptions
+
+
+def test_describe_unwraps_groups_without_builtin_exceptiongroup():
+    exc = _Group([TimeoutError("timed out"), _Group([ValueError("x")])])
+    assert describe(exc) == "TimeoutError: timed out; ValueError: x"
+    assert describe(KeyError("k")) == "KeyError: 'k'"

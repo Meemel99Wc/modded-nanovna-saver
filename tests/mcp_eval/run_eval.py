@@ -243,9 +243,14 @@ async def run_once(task: Task, backend: Backend, max_turns: int,
 
 def describe(exc: BaseException) -> str:
     """The real causes inside (nested) exception groups, not just
-    "unhandled errors in a TaskGroup"."""
-    if isinstance(exc, BaseExceptionGroup):
-        return "; ".join(describe(e) for e in exc.exceptions)
+    "unhandled errors in a TaskGroup".
+
+    Duck-typed on .exceptions: Python 3.10 has no built-in
+    BaseExceptionGroup, and anyio raises the exceptiongroup backport
+    there (requires-python is >=3.10)."""
+    inner = getattr(exc, "exceptions", None)
+    if isinstance(inner, (list, tuple)) and inner:
+        return "; ".join(describe(e) for e in inner)
     return f"{type(exc).__name__}: {exc}"
 
 
