@@ -27,6 +27,8 @@ reads, so it says what the action does, the units and what it returns.
 Do not add GUI dialogs here: everything must work headless.
 """
 
+import bisect
+import cmath
 import logging
 import math
 from concurrent.futures import Future
@@ -107,6 +109,36 @@ def _point(dp: Datapoint, parameter: str) -> dict[str, Any]:
     return out
 
 
+def _interp_point(data: list[Datapoint], freq_hz: float) -> tuple[Datapoint, float, bool]:
+    """Value of a sweep at freq_hz: the measured point if one is there, else interpolated between the two measured points
+    around it (log magnitude, i.e. linear in dB, and phase along the shorter way round). Returns (point, step_hz, interpolated)
+    where step_hz is the spacing of the two points used. Raises ActionError outside the sweep: the nearest edge point would
+    be the wrong frequency."""
+    pts = sorted(data, key=lambda d: d.freq)
+    lo_f, hi_f = pts[0].freq, pts[-1].freq
+    if not lo_f <= freq_hz <= hi_f:
+        raise ActionError(
+            f"Taajuus {freq_hz:.0f} Hz on pyyhkäisyn ({lo_f}–{hi_f} Hz) ulkopuolella. "
+            "Aseta pyyhkäisy kattamaan se (mieluiten kapeasti sen ympärille) ja aja sweep_run."
+        )
+    k = bisect.bisect_left([d.freq for d in pts], freq_hz)
+    if pts[k].freq == freq_hz:
+        step = pts[k].freq - pts[k - 1].freq if k > 0 else (pts[1].freq - pts[0].freq if len(pts) > 1 else 0)
+        return pts[k], float(step), False
+    d0, d1 = pts[k - 1], pts[k]
+    t = (freq_hz - d0.freq) / (d1.freq - d0.freq)
+    z0, z1 = complex(d0.re, d0.im), complex(d1.re, d1.im)
+    m0, m1 = abs(z0), abs(z1)
+    if m0 > 0 and m1 > 0:
+        mag = m0 * (m1 / m0) ** t
+        dphi = math.atan2(math.sin(math.atan2(z1.imag, z1.real) - math.atan2(z0.imag, z0.real)),
+                          math.cos(math.atan2(z1.imag, z1.real) - math.atan2(z0.imag, z0.real)))
+        z = cmath.rect(mag, math.atan2(z0.imag, z0.real) + t * dphi)
+    else:
+        z = z0 + t * (z1 - z0)
+    return Datapoint(round(freq_hz), z.real, z.imag), float(d1.freq - d0.freq), True
+
+
 def _ranges_below(data: list[Datapoint], limit: float) -> list[dict]:
     ranges = []
     start = None
@@ -125,6 +157,51 @@ def _ranges_below(data: list[Datapoint], limit: float) -> list[dict]:
         {"start_hz": a, "stop_hz": b, "bandwidth_hz": b - a}
         for a, b in ranges
     ]
+
+
+def _crossing(f0: float, g0: float, f1: float, g1: float, level: float) -> int:
+    """Frequency where gain crosses level between two points (linear
+    interpolation of dB over frequency)."""
+    frac = (level - g0) / (g1 - g0) if g1 != g0 else 0.0
+    return round(f0 + frac * (f1 - f0))
+
+
+def _minus_3db_band(data: list[Datapoint], drop_db: float = 3.0) -> dict:
+    """-3 dB band: the contiguous region around the gain maximum where
+    gain >= max - drop_db. Other peaks outside that region are ignored.
+
+    Edges are linearly interpolated to the -3 dB crossing. If the band
+    runs into the end of the sweep, that edge is not known: start_hz or
+    stop_hz is None and open_low / open_high is True; bandwidth_hz and
+    center_hz are then None too. center_hz is the geometric mean
+    sqrt(f1 * f2) of the edges."""
+    gains = [d.gain for d in data]
+    peak = max(range(len(gains)), key=lambda i: gains[i])
+    level = gains[peak] - drop_db
+    lo = peak
+    while lo > 0 and gains[lo - 1] >= level:
+        lo -= 1
+    hi = peak
+    while hi < len(gains) - 1 and gains[hi + 1] >= level:
+        hi += 1
+    open_low = lo == 0
+    open_high = hi == len(gains) - 1
+    start = None if open_low else _crossing(
+        data[lo - 1].freq, gains[lo - 1], data[lo].freq, gains[lo], level
+    )
+    stop = None if open_high else _crossing(
+        data[hi].freq, gains[hi], data[hi + 1].freq, gains[hi + 1], level
+    )
+    closed = start is not None and stop is not None
+    return {
+        "start_hz": start,
+        "stop_hz": stop,
+        "bandwidth_hz": stop - start if closed else None,
+        "center_hz": round(math.sqrt(start * stop)) if closed else None,
+        "edges_interpolated": True,
+        "open_low": open_low,
+        "open_high": open_high,
+    }
 
 
 def _resonances(data: list[Datapoint]) -> list[dict]:
@@ -589,8 +666,11 @@ class SaverAPI:
     )
     def sweep_run(self) -> Pending:
         """Run one sweep with the current settings and wait until it is
-        done. Returns a summary of the result (data_summary); use
-        data_points or the saver://sweep resources for the full data."""
+        done. Returns a summary of the result (data_summary). In it
+        min_gain/max_gain are the extremes of the WHOLE sweep, not the
+        value at any given frequency: to read S11/S21 at one frequency
+        use data_at(freq_hz, parameter="s21") (the sweep must cover it). Full data:
+        data_points or the saver://sweep resources."""
         return Pending(self._start_sweep(), lambda _: self.data_summary())
 
     @action("sweep_stop", risk=Risk.ACT, category="sweep",
@@ -668,8 +748,16 @@ class SaverAPI:
     def data_summary(self) -> dict:
         """Summary of the current sweep data: range, points, S11 minimum
         VSWR (frequency, return loss, impedance), ranges with VSWR <= 2
-        and <= 1.5, series resonances (X = 0), and S21 min/max gain with
-        the -3 dB band around the maximum."""
+        and <= 1.5 (each with bandwidth_hz), series resonances (X = 0),
+        and S21 min/max gain with the -3 dB band (s21.minus_3db): the
+        contiguous region around the maximum, edges linearly
+        interpolated to the -3 dB crossing, with bandwidth_hz and
+        center_hz = sqrt(start_hz * stop_hz) (geometric mean). If the
+        band reaches the sweep end, open_low/open_high is true and that
+        edge (and bandwidth_hz, center_hz) is null: widen the sweep.
+        min_gain/max_gain are the extremes of the whole sweep, not values
+        at a given frequency: for one frequency use
+        data_at(freq_hz, parameter="s21"|"s11")."""
         s11, s21 = self._data()
         out: dict[str, Any] = {
             "source": self.app.sweepSource,
@@ -688,11 +776,10 @@ class SaverAPI:
         if s21 and any(d.re or d.im for d in s21):
             lo = min(s21, key=lambda d: d.gain)
             hi = max(s21, key=lambda d: d.gain)
-            band = [d.freq for d in s21 if d.gain >= hi.gain - 3]
             out["s21"] = {
                 "min_gain": _point(lo, "s21"),
                 "max_gain": _point(hi, "s21"),
-                "minus_3db": {"start_hz": band[0], "stop_hz": band[-1]},
+                "minus_3db": _minus_3db_band(s21),
             }
         out["calibrated"] = bool(self.app.calibration.isCalculated)
         if self.app.ref_data.s11:
@@ -733,15 +820,42 @@ class SaverAPI:
 
     @action("data_at", risk=Risk.READ, category="data",
             gui=("Marker: values at marker frequency",))
-    def data_at(self, freq_hz: int) -> dict:
-        """S11 and S21 values at the measured point nearest to freq_hz."""
+    def data_at(
+        self,
+        freq_hz: int,
+        parameter: Literal["s11", "s21", "both"] = "both",
+    ) -> dict:
+        """Value at ONE frequency, interpolated between the two measured
+        points around freq_hz (dB and phase), so it does not depend on
+        where the sweep points happen to fall. Errors if freq_hz is
+        outside the sweep: sweep a range that contains it first. Each
+        value has interpolated (false if a point is exactly there) and
+        step_hz, the spacing of the points used: if the curve changes a
+        lot over one step (filter edge, resonance) narrow the sweep
+        around freq_hz for a more exact value. Use parameter="s21" for
+        filter gain/attenuation (its "db" is the gain) and "s11" for
+        reflection; "both" returns S21 first, then S11. The min_gain /
+        max_gain of sweep_run and data_summary are whole-sweep extremes,
+        not this."""
         s11, s21 = self._data()
         if not s11:
             raise ActionError("Ei mittausdataa. Aja sweep_run ensin.")
-        i = min(range(len(s11)), key=lambda k: abs(s11[k].freq - freq_hz))
-        out = {"s11": _point(s11[i], "s11")}
-        if i < len(s21):
-            out["s21"] = _point(s21[i], "s21")
+        out: dict[str, Any] = {}
+        if parameter in ("s21", "both"):
+            if s21:
+                out["s21"] = self._value_at(s21, freq_hz, "s21")
+            elif parameter == "s21":
+                raise ActionError("Ei S21-dataa tässä pyyhkäisyssä.")
+        if parameter in ("s11", "both"):
+            out["s11"] = self._value_at(s11, freq_hz, "s11")
+        return out
+
+    @staticmethod
+    def _value_at(data: list[Datapoint], freq_hz: float, parameter: str) -> dict:
+        dp, step, interpolated = _interp_point(data, freq_hz)
+        out = _point(dp, parameter)
+        out["interpolated"] = interpolated
+        out["step_hz"] = step
         return out
 
     @action("reference_set", risk=Risk.ACT, category="data",

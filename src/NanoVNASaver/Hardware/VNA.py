@@ -43,11 +43,21 @@ DISLORD_BW = {
 WAIT = 0.05
 
 
-def _max_retries(bandwidth: int, datapoints: int) -> int:
+# Each retry waits about 0.1 s. The LiteVNA64 firmware (IF=12kHz) needs
+# ~5 s to answer "data 0" for a 101 point sweep, longer for wider ones.
+# The extra budget is NOT global: a driver that recognises such firmware sets
+# VNA.slow_firmware_retries on its instance (NanoVNA_H4 does for LiteVNA64).
+# Every other device keeps the original budget, so an unplugged cable or a
+# hung real NanoVNA is still noticed after the usual time.
+SLOW_FIRMWARE_RETRIES = 160
+
+
+def _max_retries(bandwidth: int, datapoints: int, extra: int = 0) -> int:
     return round(
         20
         + 20 * (datapoints / 101)
         + (1000 / bandwidth) ** 1.30 * (datapoints / 101)
+        + extra
     )
 
 
@@ -59,6 +69,9 @@ class VNA:
     hardware_revision: str | Version = "NOT SUPPORTED"
     sweep_points_max = 101
     sweep_points_min = 11
+    # Extra retries (~0.1 s each) per answer; 0 unless the driver knows the
+    # firmware is slow (see SLOW_FIRMWARE_RETRIES).
+    slow_firmware_retries = 0
 
     # Must be initilized in child classes
     sweep_max_freq_hz = 0.0
@@ -106,7 +119,9 @@ class VNA:
             self.serial.write(f"{command}\r".encode("ascii"))
             sleep(wait)
             retries = 0
-            max_retries = _max_retries(self.bandwidth, self.datapoints)
+            max_retries = _max_retries(
+                self.bandwidth, self.datapoints, self.slow_firmware_retries
+            )
             logger.debug("Max retries: %s", max_retries)
             while True:
                 line = self.serial.readline().decode("ascii").strip()

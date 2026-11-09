@@ -99,7 +99,7 @@ Ryhmät:
   `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`, `device_screenshot`
 - **sweep**: `sweep_get`, `sweep_configure`, `band_list`, `sweep_set_band`,
   `sweep_set_attenuator`, `sweep_run`, `sweep_stop`, `sweep_segmented`
-- **data**: `data_summary`, `data_points`, `data_at`, `reference_set`, `reference_reset`
+- **data**: `data_summary`, `data_points`, `data_at` (arvo yhdellä taajuudella, interpoloitu mitattujen pisteiden välillä; virhe, jos taajuus on pyyhkäisyn ulkopuolella), `reference_set`, `reference_reset`
 - **markers**: `marker_list`, `marker_set`, `marker_add`, `marker_remove`
 - **analysis**: `analysis_list`, `analysis_run`, `tdr_result`
 - **charts**: `chart_list`, `chart_image` (PNG)
@@ -108,6 +108,19 @@ Ryhmät:
   `calibration_reset`, `calibration_set_offset_delay`, `calibration_load`, `calibration_save`
 
 Työkalut palauttavat **yhteenvedon** (esim. pienin VSWR, resonanssit, VSWR ≤ 2 -kaistat).
+`sweep_run`- ja `data_summary`-yhteenvedossa S21:n −3 dB -kaista on
+`s21.minus_3db = {start_hz, stop_hz, bandwidth_hz, center_hz, edges_interpolated,
+open_low, open_high}`:
+
+- kaista on yhtenäinen alue maksimin ympärillä (vahvistus ≥ max − 3 dB); muut piikit
+  kaistan ulkopuolella eivät venytä sitä
+- reunat on interpoloitu lineaarisesti −3 dB:n ylityskohtaan, joten ne ovat
+  pisteresoluutiota tarkempia
+- `center_hz` on reunojen geometrinen keskiarvo √(f1·f2)
+- jos kaista jatkuu pyyhkäisyn reunan yli, `open_low`/`open_high` on `true` ja kyseinen
+  reuna sekä `bandwidth_hz` ja `center_hz` ovat `null`: levennä pyyhkäisyä
+
+S11:n `vswr_le_2`- ja `vswr_le_1_5`-alueilla on jo `bandwidth_hz` (reunat pisteresoluutiolla).
 Täysi data on saatavilla **resursseina**, jotta mallin konteksti ei täyty tuhansista pisteistä:
 
 - `saver://sweep/latest.s1p`, `saver://sweep/latest.s2p`: koko mittaus Touchstone-muodossa

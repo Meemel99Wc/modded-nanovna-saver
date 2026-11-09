@@ -19,8 +19,13 @@ import logging
 
 from .NanoVNA_H import NanoVNA_H
 from .Serial import Interface
+from .VNA import SLOW_FIRMWARE_RETRIES
 
 logger = logging.getLogger(__name__)
+
+
+LITEVNA64_MAX_FREQ_HZ = 6300e6
+LITEVNA64_MAX_POINTS = 401     # SWEEP_POINTS_MAX of the firmware; the driver default of 101 blocked 201/401 in MCP
 
 
 class NanoVNA_H4(NanoVNA_H):
@@ -38,6 +43,22 @@ class NanoVNA_H4(NanoVNA_H):
     def __init__(self, iface: Interface):
         super().__init__(iface)
         self.sweep_max_freq_hz = 1500e6
+        if self._is_litevna64_firmware():
+            # Missing Link firmware (litevna-openvna) answers as
+            # "NanoVNA-H 4 compatible, LiteVNA64 hardware"; the hardware
+            # sweeps up to 6.3 GHz and 401 points. Real NanoVNA-H 4 stays at 1.5 GHz.
+            self.sweep_max_freq_hz = LITEVNA64_MAX_FREQ_HZ
+            self.sweep_points_max = LITEVNA64_MAX_POINTS
+            # ~5 s per sweep answer: wait longer, only for this firmware
+            self.slow_firmware_retries = SLOW_FIRMWARE_RETRIES
         self.sweep_method = "scan"
         if "Scan mask command" in self.features:
             self.sweep_method = "scan_mask"
+
+    def _is_litevna64_firmware(self) -> bool:
+        try:
+            info = " ".join(self.exec_command("info"))
+        except Exception:  # serial trouble: keep the safe 1.5 GHz limit
+            logger.warning("Could not read info for LiteVNA64 detection")
+            return False
+        return "LiteVNA64" in info
