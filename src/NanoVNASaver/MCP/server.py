@@ -164,9 +164,12 @@ class SaverMCP:
             )
             annotations["confirmation"] = confirm_type
 
-        async def tool(
-            ctx: Context, confirmation: Any = None, **kwargs: Any
-        ) -> Any:
+        # confirmation comes in through **kwargs, not as a parameter
+        # with default None: on Python 3.10 typing.get_type_hints wraps
+        # such a parameter in Optional[...], and mcp then rejects the
+        # Resolve(...) annotation as "wrapped in a union".
+        async def tool(ctx: Context, **kwargs: Any) -> Any:
+            confirmation = kwargs.pop("confirmation", None)
             return await self.run_action(act, kwargs, ctx, confirmation)
 
         tool.__signature__ = sig.replace(  # type: ignore[attr-defined]

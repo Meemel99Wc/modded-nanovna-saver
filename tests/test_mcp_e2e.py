@@ -146,6 +146,23 @@ def test_measure_virtual_antenna(saver):
     assert [e.tool for e in log if e.outcome == "ok"][-1] == "sweep_run"
 
 
+def test_marker_set_reports_new_frequency(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    # same sweep as test_measure_virtual_antenna; later tests expect 202 points
+    call(saver, "sweep_configure",
+         {"start_hz": 10_000_000, "stop_hz": 20_000_000, "segments": 2})
+    call(saver, "sweep_run")
+    call(saver, "marker_set", {"index": 0, "freq_hz": 14_200_000})
+    result = call(saver, "marker_list")
+    assert not is_error(result)
+    # list results come as one content item per element
+    markers = [json.loads(c.text) for c in result.content]
+    first = next(m for m in markers if m["index"] == 0)
+    assert first["freq_hz"] == first["s11"]["freq_hz"]
+    assert abs(first["freq_hz"] - 14_200_000) <= 50_000
+
 def test_chart_image(saver):
     result = call(saver, "chart_image", {"chart": "s11.smith"})
     assert not is_error(result)
@@ -425,3 +442,28 @@ def test_device_input_permission_ends_on_stop_and_on_reconnect(saver):
                if e.tool == "ui_control")
     assert ctl.allow_input(True)                   # granting again works
 
+
+def test_data_at_parameter(saver):
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    call(saver, "sweep_configure", {"start_hz": 140_000_000, "stop_hz": 146_000_000})
+    text(call(saver, "sweep_run"))
+    both = text(call(saver, "data_at", {"freq_hz": 143_000_000}))
+    assert list(both)[0] == "s21" and "s11" in both
+    only = text(call(saver, "data_at", {"freq_hz": 143_000_000, "parameter": "s21"}))
+    assert list(only) == ["s21"]
+    assert only["s21"]["db"] == both["s21"]["db"]
+    assert isinstance(both["s21"]["interpolated"], bool) and both["s21"]["step_hz"] > 0
+    # exactly at a measured point: that point, not interpolated
+    pt = text(call(saver, "data_points", {"parameter": "s21", "max_points": 5}))["points"][1]
+    at_pt = text(call(saver, "data_at", {"freq_hz": pt["freq_hz"], "parameter": "s21"}))
+    assert at_pt["s21"]["interpolated"] is False and at_pt["s21"]["db"] == pt["db"]
+    # between two measured points: interpolated, with the spacing of the points used
+    mid = text(call(saver, "data_at", {"freq_hz": 143_030_000, "parameter": "s21"}))
+    assert mid["s21"]["interpolated"] is True and mid["s21"]["freq_hz"] == 143_030_000
+    # outside the sweep: an error that says what to do, not the value of the edge point
+    far = call(saver, "data_at", {"freq_hz": 500_000_000, "parameter": "s21"})
+    assert is_error(far) and "ulkopuolella" in far.content[0].text
+    only11 = text(call(saver, "data_at", {"freq_hz": 143_000_000, "parameter": "s11"}))
+    assert list(only11) == ["s11"]

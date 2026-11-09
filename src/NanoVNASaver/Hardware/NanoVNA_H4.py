@@ -19,6 +19,7 @@ import logging
 
 from .NanoVNA_H import NanoVNA_H
 from .Serial import Interface
+from .VNA import SLOW_FIRMWARE_RETRIES
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,8 @@ class NanoVNA_H4(NanoVNA_H):
             # sweeps up to 6.3 GHz and 401 points. Real NanoVNA-H 4 stays at 1.5 GHz.
             self.sweep_max_freq_hz = LITEVNA64_MAX_FREQ_HZ
             self.sweep_points_max = LITEVNA64_MAX_POINTS
+            # ~5 s per sweep answer: wait longer, only for this firmware
+            self.slow_firmware_retries = SLOW_FIRMWARE_RETRIES
         self.sweep_method = "scan"
         if "Scan mask command" in self.features:
             self.sweep_method = "scan_mask"
