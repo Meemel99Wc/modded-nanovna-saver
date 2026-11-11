@@ -30,9 +30,12 @@ Transports:
 
 import asyncio
 import inspect
+import io
 import json
 import logging
+import os
 import secrets
+import sys
 import threading
 import time
 from pathlib import Path
@@ -40,6 +43,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
+from . import stdio_wire
 from .bridge import MainThreadBridge
 from .control import AIControl, LogEntry
 from .prompts import register_prompts
@@ -422,7 +426,7 @@ class SaverMCP:
 
         def run() -> None:
             try:
-                asyncio.run(self.server.run_stdio_async())
+                asyncio.run(self._serve_stdio())
             finally:
                 if on_exit is not None:
                     self.bridge.submit(on_exit)
@@ -430,6 +434,27 @@ class SaverMCP:
         self._thread = threading.Thread(target=run, name="mcp-stdio",
                                         daemon=True)
         self._thread.start()
+
+    async def _serve_stdio(self) -> None:
+        """Serve on the stdout claimed by stdio_wire.claim_stdout(), so
+        stray writes to fd 1 / sys.stdout go to stderr (#189)."""
+        out = stdio_wire.wire()
+        low = getattr(self.server, "_lowlevel_server", None) or getattr(
+            self.server, "_mcp_server", None
+        )
+        if out is None or low is None:
+            if out is not None:  # unknown mcp internals: give fd 1 back
+                os.dup2(out.fileno(), 1)
+                sys.stdout = sys.__stdout__
+            await self.server.run_stdio_async()
+            return
+        # pylint: disable=import-outside-toplevel
+        import anyio
+        from mcp.server.stdio import stdio_server
+
+        stdout = anyio.wrap_file(io.TextIOWrapper(out, encoding="utf-8"))
+        async with stdio_server(stdout=stdout) as (read, write):
+            await low.run(read, write, low.create_initialization_options())
 
 
 class _TokenGuard:

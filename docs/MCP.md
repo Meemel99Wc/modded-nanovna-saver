@@ -63,6 +63,58 @@ testata, vaikka oikea laite ei vielä tunnistu (#19).
 python -m NanoVNASaver --virtual --mcp http --mcp-allow
 ```
 
+### D. Etäkone SSH:n yli
+
+Laite on kytketty toiseen koneeseen (esim. testikone, litevna-openvna#156). Malli ajetaan
+omalla koneella. Saver asennetaan etäkoneelle käyttäjän omaan venviin
+(`~/venv/bin/pip install -e ".[mcp]"`), ja kirjautumisen pitää toimia SSH-avaimella ilman
+salasanaa.
+
+**Ensisijainen tapa: stdio SSH:n yli.** Asiakas käynnistää Saverin etäkoneelle ssh:lla:
+
+```bash
+claude mcp add litevna-testikone -- ssh -T -o BatchMode=yes \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+  <käyttäjä>@<etäkone> ~/venv/bin/python -m NanoVNASaver --headless --mcp stdio
+```
+
+- `-T`: ei päätettä. Pääte sekoittaisi rivinvaihdot ja protokollan.
+- `BatchMode=yes`: jos avain puuttuu, yhteys epäonnistuu heti eikä jää odottamaan salasanaa.
+- `ServerAliveInterval`: jos verkko katkeaa, asiakas huomaa sen noin 45 sekunnissa.
+- `--headless` asettaa Qt:n offscreen-tilaan, joten etäkoneella ei tarvita näyttöä.
+
+stdoutiin menee vain JSON-RPC. Saver siirtää kaiken muun tulosteen stderriin heti
+käynnistyksen alussa (`MCP/stdio_wire.py`). Tähän kuuluvat print-lauseet sekä Qt:n ja
+C-kirjastojen viestit. Claude Code näyttää stderrin MCP-lokissa. Debug-lokin saa valitsimella
+`--debug-file`.
+
+Kun yhteys katkeaa, Saver vapauttaa laitteen ja sammuu itse. Tämä tapahtuu, kun stdin
+sulkeutuu (ssh päättyy) tai prosessi saa SIGTERMin tai SIGHUPin: pyyhkäisy pysäytetään,
+sarjaportti suljetaan ja paluukoodi on 0. Testi: `tests/test_mcp_stdio.py`.
+Jos verkko katkeaa niin, ettei etäkone huomaa sitä, sshd pitää Saverin käynnissä TCP:n
+aikakatkaisuun asti. Etäkoneen `/etc/ssh/sshd_config`:iin kannattaa siksi lisätä
+`ClientAliveInterval 15` ja `ClientAliveCountMax 3`. Laitelukko (litevna-openvna#188,
+Saver PR #14) on `flock`, joten se vapautuu aina, kun prosessi päättyy, myös `kill -9`:llä.
+
+Tallennetut tiedostot jäävät etäkoneen työhakemistoon (`~/NanoVNASaver-MCP`).
+Kuvakaappaukset ja kaaviot tulevat vastauksen mukana.
+
+**Vaihtoehto: HTTP ja SSH-tunneli.** Tätä tapaa kannattaa käyttää, kun Saver jää etäkoneelle
+käyntiin usean asiakasyhteyden ajaksi.
+
+```bash
+# etäkoneella (esim. tmuxissa)
+~/venv/bin/python -m NanoVNASaver --headless --mcp http
+# omalla koneella: tunneli ja tunniste
+ssh -N -L 8765:127.0.0.1:8765 <käyttäjä>@<etäkone> &
+ssh <käyttäjä>@<etäkone> cat .nanovna-saver/mcp.json
+claude mcp add --transport http litevna-testikone http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer <token>"
+```
+
+HTTP kuuntelee etäkoneella vain osoitteessa 127.0.0.1, joten siihen pääsee vain tunnelin
+kautta, ja tunniste tarvitaan silti. Tunniste vaihtuu joka käynnistyksellä.
+
 ## Turvallisuus
 
 | AI ohjaa | STOP painettu |
