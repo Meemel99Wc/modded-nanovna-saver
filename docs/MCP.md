@@ -89,6 +89,13 @@ python -m NanoVNASaver --virtual --mcp http --mcp-allow
   origineista hylätään.
 - Kalibroinnissa malli ei voi ohittaa ihmistä: jokainen standardi kysytään erikseen
   ("kytke SHORT"), ja mittaus alkaa vasta kuittauksen jälkeen.
+- **Laitelukko.** Kun Saver kytkeytyy oikeaan laitteeseen (GUI:n Connect tai `device_connect`), se ottaa
+  saman koneenlaajuisen lukon kuin litevna-openvna:n `tools/vna_lock.py` ja vapauttaa sen, kun yhteys
+  katkaistaan. Jos lukko on varattu, kytkentä hylätään ja viestissä näkyy pitäjä ja tarkoitus
+  (esim. `lfai@marko pid 1234, 40 s, tarkoitus: savutesti`). Rescan ei avaa portteja, kun joku muu pitää
+  lukkoa: laite näkyy listassa merkinnällä "(varattu)". Virtuaalilaite ei ota lukkoa. Lukon muoto
+  (polku, `flock`/`msvcrt`, `.holder`-tiedosto, `LITEVNA_LOCK_HELD`) on kuvattu tiedostossa
+  `src/NanoVNASaver/device_lock.py`, ja sen määrää `vna_lock.py`.
 
 ## Mitä mallilla on käytössä
 
