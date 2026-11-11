@@ -406,7 +406,8 @@ class SaverAPI:
                 fut.set_result(True)
 
         signals.finished.connect(done)
-        sc.connect_device()
+        self.last_error = ""
+        sc.connect_device(purpose="NanoVNA-Saver MCP (device_connect)")
         if not self.app.vna.connected():
             signals.finished.disconnect(done)
             raise ActionError(
