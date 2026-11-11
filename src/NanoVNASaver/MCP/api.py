@@ -44,6 +44,7 @@ from ..RFTools import Datapoint
 from ..Settings.Sweep import SweepMode
 from ..Touchstone import Touchstone
 from .bridge import Pending
+from .device_watch import MAX_WAIT_S, DeviceWatch
 from .registry import Risk, action
 
 if TYPE_CHECKING:
@@ -245,6 +246,8 @@ class SaverAPI:
 
         # Instance attribute shadows the method for every caller.
         app.showError = show_error  # type: ignore[method-assign]
+        # follows the device across resets and mode changes (#190)
+        self.watch = DeviceWatch(app)
 
     # --- helpers ---------------------------------------------------------
 
@@ -430,8 +433,9 @@ class SaverAPI:
         IF bandwidth, frequency limits and serial number."""
         vna = self.app.vna
         if not vna.connected():
-            return {"connected": False}
+            return {"connected": False, "usb": self.watch.snapshot()}
         return {
+            "usb": self.watch.snapshot(),
             "connected": True,
             "name": vna.name,
             "firmware": str(vna.version),
@@ -444,6 +448,32 @@ class SaverAPI:
             "max_freq_hz": vna.sweep_max_freq_hz,
             "port": str(vna.serial.port),
         }
+
+    @action(
+        "device_wait",
+        risk=Risk.READ,
+        category="device",
+        gui=("Serial port control: Connect to device (by hand after a reset)",),
+        timeout=MAX_WAIT_S + 30,
+    )
+    def device_wait(
+        self,
+        state: Literal[
+            "app", "loader", "vendor_bl", "storage", "rom_dfu", "gone"
+        ] = "app",
+        timeout_s: float = 60,
+    ) -> Pending:
+        """Wait until the LiteVNA is in `state` and return the state seen.
+
+        States (seen from USB): app = firmware running (serial port),
+        vendor_bl = dark-screen update mode, storage = USB Storage mode (no
+        serial port), rom_dfu = chip ROM DFU, loader = boot menu (not on
+        USB yet), gone = not on USB. Use after anything that restarts the
+        device: Saver reconnects by itself when the device is back in
+        app, and "app" returns only when it is connected again and idle,
+        so sweep_run works right after. timeout_s max 300. On timeout the
+        result has "timeout": true and the state that was seen."""
+        return Pending(self.watch.wait(state, timeout_s))
 
     @action(
         "device_set_datapoints",

@@ -92,11 +92,40 @@ python -m NanoVNASaver --virtual --mcp http --mcp-allow
 
 ## Mitä mallilla on käytössä
 
-**Työkalut** (41) generoidaan toimintorekisteristä (`src/NanoVNASaver/MCP/api.py`, `@action`).
+**Työkalut** (42) generoidaan toimintorekisteristä (`src/NanoVNASaver/MCP/api.py`, `@action`).
 Ryhmät:
 
 - **device**: `device_list_ports`, `device_connect`, `device_disconnect`, `device_info`,
-  `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`, `device_screenshot`
+  `device_wait`, `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`,
+  `device_screenshot`
+
+**Laitteen seuranta (litevna-openvna#190).** Kun LiteVNA on kytketty, Saver seuraa sen
+USB-porttipolkua (esim. `1-1`) puolen sekunnin välein (`MCP/device_watch.py`,
+`Hardware/usb_state.py`). Laite tunnistetaan porttipolusta, ei portin nimestä, koska
+sovelluksella, valmistajan bootloaderilla ja Storage-tilalla on sama VID:PID `04b4:0008` ja
+sarjanumero `ZN406001` on kaikissa yksilöissä sama.
+
+| tila | miltä näyttää USB:ssä |
+|---|---|
+| `app` | `04b4:0008` ja CDC-sarjaportti |
+| `vendor_bl` | `04b4:0008`, tuote "CDC-ACM Demo" (tumma näyttö, päivitystila) |
+| `storage` | `04b4:0008`, pelkkä massamuisti, ei sarjaporttia |
+| `rom_dfu` | `2e3c:df11` (BOOT0) |
+| `loader` | varattu: loaderilla ei vielä ole USB:tä (#184) |
+| `gone` | ei mitään siinä portissa |
+
+- Kun laite poistuu sovellustilasta (reset, päivitystila, Storage, irrotus), kesken oleva
+  pyyhkäisy epäonnistuu heti ja virheessä kerrotaan havaittu tila. Sarjaportti suljetaan,
+  ja asiakkaille lähetetään `saver://device`-päivitysilmoitus ja lokiviesti.
+- Kun sama porttipolku näyttää taas sovelluksen, Saver yhdistää itse, vaikka portin nimi
+  olisi vaihtunut. Jos käyttäjä irrottaa yhteyden itse (painike tai `device_disconnect`),
+  seuranta loppuu.
+- `device_wait(state, timeout_s)` odottaa haluttua tilaa. `app` palaa vasta, kun laite on
+  taas kytketty ja vapaa, joten `sweep_run` toimii heti sen jälkeen. `device_info` kertoo
+  USB-tilan kentässä `usb`.
+- Linuxilla tila luetaan `/sys/bus/usb/devices`-hakemistosta, josta näkyvät kaikki tilat.
+  Muilla käyttöjärjestelmillä näkyvät vain sarjaportit, joten `storage` ja `rom_dfu`
+  näkyvät tilana `gone`.
 - **sweep**: `sweep_get`, `sweep_configure`, `band_list`, `sweep_set_band`,
   `sweep_set_attenuator`, `sweep_run`, `sweep_stop`, `sweep_segmented`
 - **data**: `data_summary`, `data_points`, `data_at` (arvo yhdellä taajuudella, interpoloitu mitattujen pisteiden välillä; virhe, jos taajuus on pyyhkäisyn ulkopuolella), `reference_set`, `reference_reset`
