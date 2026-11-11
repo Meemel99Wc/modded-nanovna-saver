@@ -151,12 +151,55 @@ kautta, ja tunniste tarvitaan silti. Tunniste vaihtuu joka käynnistyksellä.
 
 ## Mitä mallilla on käytössä
 
-**Työkalut** (44) generoidaan toimintorekisteristä (`src/NanoVNASaver/MCP/api.py`, `@action`).
+**Työkalut** (46) generoidaan toimintorekisteristä (`src/NanoVNASaver/MCP/api.py`, `@action`).
 Ryhmät:
 
 - **device**: `device_list_ports`, `device_connect`, `device_disconnect`, `device_info`,
-  `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`, `device_screenshot`,
-  `device_shell`, `device_shell_act`, `device_shell_persist`, `device_input` (ks. alla)
+  `device_wait`, `device_set_datapoints`, `device_set_bandwidth`, `device_set_validation`,
+  `device_screenshot`, `device_shell`, `device_shell_act`, `device_shell_persist`,
+  `device_input` (ks. alla)
+
+**Laitteen seuranta (litevna-openvna#190).** Kun LiteVNA on kytketty, Saver seuraa sen
+USB-porttipolkua (esim. `1-1`) puolen sekunnin välein (`MCP/device_watch.py`,
+`Hardware/usb_state.py`). Laite tunnistetaan porttipolusta, ei portin nimestä, koska
+sovelluksella, valmistajan bootloaderilla ja Storage-tilalla on sama VID:PID `04b4:0008` ja
+sarjanumero `ZN406001` on kaikissa yksilöissä sama.
+
+| tila | miltä näyttää USB:ssä |
+|---|---|
+| `app` | `04b4:0008` ja CDC-sarjaportti |
+| `vendor_bl` | `04b4:0008`, tuote "CDC-ACM Demo" (tumma näyttö, päivitystila) |
+| `storage` | `04b4:0008`, pelkkä massamuisti, ei sarjaporttia |
+| `rom_dfu` | `2e3c:df11` (BOOT0) |
+| `loader` | varattu: loaderilla ei vielä ole USB:tä (#184) |
+| `gone` | ei mitään siinä portissa |
+
+- Kun laite poistuu sovellustilasta (reset, päivitystila, Storage, irrotus), kesken oleva
+  pyyhkäisy epäonnistuu heti ja virheessä kerrotaan havaittu tila. Sarjaportti suljetaan,
+  ja asiakkaille lähetetään `saver://device`-päivitysilmoitus ja lokiviesti.
+- Kun sama porttipolku näyttää taas sovelluksen, Saver yhdistää itse, vaikka portin nimi
+  olisi vaihtunut. Jos käyttäjä irrottaa yhteyden itse (painike tai `device_disconnect`),
+  seuranta loppuu.
+  - Saver yhdistää vasta, kun portti on ollut näkyvissä 1,5 s ja tunnistus antaa saman
+    laitetyypin kuin ensimmäisellä kerralla (esim. H4). Oikealla laitteella CDC-portti tulee
+    näkyviin ennen kuin komentotulkki vastaa. Silloin tunnistus antaa "Unknown", ja kaikki
+    pyyhkäisyt epäonnistuvat.
+  - Linuxin USB-laitenumero vaihtuu jokaisessa enumeroinnissa. Siksi myös nopea
+    uudelleenkäynnistys, joka ehtii valmiiksi kahden tarkistuksen välissä, havaitaan.
+- `device_wait(state, timeout_s, expect_change)` odottaa haluttua tilaa. `app` palaa vasta,
+  kun laite on taas kytketty ja vapaa, joten `sweep_run` toimii heti sen jälkeen. Jos
+  Saver ei ole vielä yhdistänyt laitteeseen, `app` tarkoittaa pelkkää USB-tilaa.
+  `device_info` kertoo USB-tilan kentässä `usb`.
+- `expect_change=true` heti uudelleenkäynnistävän komennon (reset, flashaus) jälkeen:
+  laite pysyy USB:ssä vielä hetken (oikealla laitteella 0,05–1,9 s), joten odotuksen täytyy
+  ensin nähdä sen poistuvan. Ilman tätä `app` palasi heti 0,0 sekunnissa.
+- Oikea laite 11.11. (main `d521d9e`): `reset` → `device_wait("app", expect_change=true)` →
+  `sweep_run` onnistui 10/10, noin 21,5 s kierros. Storage-kulku 4/4: Storage
+  tunnistetaan, kytketyn laitteen katoaminen havaitaan 9,2 s:ssa, ja Control-tilaan
+  palattua Saver yhdistää uudelleen ja mittaa.
+- Linuxilla tila luetaan `/sys/bus/usb/devices`-hakemistosta, josta näkyvät kaikki tilat.
+  Muilla käyttöjärjestelmillä näkyvät vain sarjaportit, joten `storage` ja `rom_dfu`
+  näkyvät tilana `gone`.
 - **sweep**: `sweep_get`, `sweep_configure`, `band_list`, `sweep_set_band`,
   `sweep_set_attenuator`, `sweep_run`, `sweep_stop`, `sweep_segmented`
 - **data**: `data_summary`, `data_points`, `data_at` (arvo yhdellä taajuudella, interpoloitu mitattujen pisteiden välillä; virhe, jos taajuus on pyyhkäisyn ulkopuolella), `reference_set`, `reference_reset`
