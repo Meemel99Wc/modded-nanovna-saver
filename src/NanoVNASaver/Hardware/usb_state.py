@@ -72,6 +72,9 @@ class UsbDevice:
     port: str | None = None  # serial port when there is one
     product: str = ""
     serial: str = ""
+    # Linux USB device number: new on every enumeration, so a reboot that
+    # is over between two polls still shows (0 = unknown)
+    devnum: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -152,9 +155,11 @@ def scan_sysfs(root: Path = SYSFS_USB) -> list[UsbDevice]:
         state = classify(vid, pid, product, has_cdc, has_msc)
         if state is None:
             continue
+        devnum = _read(dev / "devnum")
         found.append(
             UsbDevice(name, vid, pid, state, port, product,
-                      _read(dev / "serial"))
+                      _read(dev / "serial"),
+                      int(devnum) if devnum.isdigit() else 0)
         )
     return found
 

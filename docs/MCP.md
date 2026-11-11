@@ -121,9 +121,23 @@ sarjanumero `ZN406001` on kaikissa yksilöissä sama.
 - Kun sama porttipolku näyttää taas sovelluksen, Saver yhdistää itse, vaikka portin nimi
   olisi vaihtunut. Jos käyttäjä irrottaa yhteyden itse (painike tai `device_disconnect`),
   seuranta loppuu.
-- `device_wait(state, timeout_s)` odottaa haluttua tilaa. `app` palaa vasta, kun laite on
-  taas kytketty ja vapaa, joten `sweep_run` toimii heti sen jälkeen. `device_info` kertoo
-  USB-tilan kentässä `usb`.
+  - Saver yhdistää vasta, kun portti on ollut näkyvissä 1,5 s ja tunnistus antaa saman
+    laitetyypin kuin ensimmäisellä kerralla (esim. H4). Oikealla laitteella CDC-portti tulee
+    näkyviin ennen kuin komentotulkki vastaa. Silloin tunnistus antaa "Unknown", ja kaikki
+    pyyhkäisyt epäonnistuvat.
+  - Linuxin USB-laitenumero vaihtuu jokaisessa enumeroinnissa. Siksi myös nopea
+    uudelleenkäynnistys, joka ehtii valmiiksi kahden tarkistuksen välissä, havaitaan.
+- `device_wait(state, timeout_s, expect_change)` odottaa haluttua tilaa. `app` palaa vasta,
+  kun laite on taas kytketty ja vapaa, joten `sweep_run` toimii heti sen jälkeen. Jos
+  Saver ei ole vielä yhdistänyt laitteeseen, `app` tarkoittaa pelkkää USB-tilaa.
+  `device_info` kertoo USB-tilan kentässä `usb`.
+- `expect_change=true` heti uudelleenkäynnistävän komennon (reset, flashaus) jälkeen:
+  laite pysyy USB:ssä vielä hetken (oikealla laitteella 0,05–1,9 s), joten odotuksen täytyy
+  ensin nähdä sen poistuvan. Ilman tätä `app` palasi heti 0,0 sekunnissa.
+- Oikea laite 11.11. (main `d521d9e`): `reset` → `device_wait("app", expect_change=true)` →
+  `sweep_run` onnistui 10/10, noin 21,5 s kierros. Storage-kulku 4/4: Storage
+  tunnistetaan, kytketyn laitteen katoaminen havaitaan 9,2 s:ssa, ja Control-tilaan
+  palattua Saver yhdistää uudelleen ja mittaa.
 - Linuxilla tila luetaan `/sys/bus/usb/devices`-hakemistosta, josta näkyvät kaikki tilat.
   Muilla käyttöjärjestelmillä näkyvät vain sarjaportit, joten `storage` ja `rom_dfu`
   näkyvät tilana `gone`.

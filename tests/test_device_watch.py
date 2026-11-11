@@ -95,17 +95,20 @@ class FakeUsb:
 
     def __init__(self) -> None:
         self.state = APP
+        self.devnum = 5
 
     def __call__(self) -> list[UsbDevice]:
         if self.state == GONE:
             return []
         port = "virtual" if self.state == APP else None
-        return [UsbDevice("1-1", 0x04B4, 0x0008, self.state, port)]
+        return [UsbDevice("1-1", 0x04B4, 0x0008, self.state, port,
+                          devnum=self.devnum)]
 
 
 @pytest.fixture()
 def saver(tmp_path, monkeypatch):
     monkeypatch.setattr(device_watch, "RETRY_S", 0.0)
+    monkeypatch.setattr(device_watch, "SETTLE_S", 0.0)
     # reconnecting rescans ports: never probe a real VNA that is plugged in
     import serial.tools.list_ports as list_ports
 
@@ -146,10 +149,61 @@ def connect_virtual(qapp, window, svc):
     assert svc.api.watch.location == "1-1"
 
 
-def wait(qapp, svc, state, timeout_s=10.0):
-    fut = svc.api.device_wait(state, timeout_s).future
+def wait(qapp, svc, state, timeout_s=10.0, expect_change=False):
+    fut = svc.api.device_wait(state, timeout_s, expect_change).future
     pump(qapp, fut.done, timeout_s + 10)
     return fut.result()
+
+
+def test_expect_change_waits_for_the_device_to_leave_first(saver):
+    """Real device 11.11.: right after `reset` the device is still on USB,
+    so a plain wait for "app" returned at once (0.0 s)."""
+    qapp, window, svc, usb = saver
+    connect_virtual(qapp, window, svc)
+    seen = wait(qapp, svc, APP, timeout_s=1.0, expect_change=True)
+    assert seen["timeout"] and seen["saw_change"] is False
+    fut = svc.api.device_wait(APP, 20, True).future
+    end = time.monotonic() + 1.2  # a few polls with the device still up
+    while time.monotonic() < end:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert not fut.done()
+    usb.state = GONE  # the reboot starts a moment later
+    pump(qapp, lambda: svc.api.watch.lost, 10)
+    usb.state = APP
+    pump(qapp, fut.done, 20)
+    seen = fut.result()
+    assert not seen.get("timeout") and seen["connected"], seen
+
+
+def test_no_reconnect_until_detected_as_the_same_type(saver):
+    """Real device 11.11.: the port is up before the shell answers and
+    detection says "Unknown"; connecting then breaks every sweep."""
+    qapp, window, svc, usb = saver
+    connect_virtual(qapp, window, svc)
+    assert svc.api.watch._kind == "VirtualVNA"
+    svc.api.watch._kind = "H4"  # what the port must be detected as
+    usb.state = GONE
+    assert wait(qapp, svc, GONE)["state"] == GONE
+    usb.state = APP
+    seen = wait(qapp, svc, APP, timeout_s=1.5)
+    assert seen["timeout"] and not window.vna.connected()
+    svc.api.watch._kind = "VirtualVNA"  # the firmware answers now
+    seen = wait(qapp, svc, APP)
+    assert not seen.get("timeout") and seen["connected"], seen
+
+
+def test_fast_reboot_is_seen_from_the_usb_device_number(saver):
+    """Same port name, but re-enumerated between two polls: the open
+    serial handle is dead, so it counts as lost and reconnects."""
+    qapp, window, svc, usb = saver
+    connect_virtual(qapp, window, svc)
+    fut = svc.api.device_wait(APP, 20, True).future
+    usb.devnum += 2
+    pump(qapp, fut.done, 20)
+    seen = fut.result()
+    assert not seen.get("timeout"), seen
+    assert seen["connected"] and seen["reconnects"] == 1
 
 
 def test_storage_and_back_reconnects_by_itself(saver):

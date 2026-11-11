@@ -603,6 +603,7 @@ class SaverAPI:
             "app", "loader", "vendor_bl", "storage", "rom_dfu", "gone"
         ] = "app",
         timeout_s: float = 60,
+        expect_change: bool = False,
     ) -> Pending:
         """Wait until the LiteVNA is in `state` and return the state seen.
 
@@ -612,9 +613,12 @@ class SaverAPI:
         USB yet), gone = not on USB. Use after anything that restarts the
         device: Saver reconnects by itself when the device is back in
         app, and "app" returns only when it is connected again and idle,
-        so sweep_run works right after. timeout_s max 300. On timeout the
-        result has "timeout": true and the state that was seen."""
-        return Pending(self.watch.wait(state, timeout_s))
+        so sweep_run works right after. Right after a command that
+        restarts the device (reset, flash) pass expect_change=true: the
+        device is still up for a moment, and the wait must first see it
+        leave. timeout_s max 300. On timeout the result has "timeout":
+        true and the state that was seen."""
+        return Pending(self.watch.wait(state, timeout_s, expect_change))
 
     @action(
         "device_set_datapoints",

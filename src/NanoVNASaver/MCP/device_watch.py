@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 POLL_MS = 500
 RETRY_S = 2.0  # between reconnect attempts while the firmware boots
+SETTLE_S = 1.5  # app port up this long before the first probe
 MAX_WAIT_S = 300
 
 
@@ -66,12 +67,16 @@ class DeviceWatch(QObject):
         self.location: str | None = None  # identity of the followed device
         self.state: str | None = None
         self.port: str | None = None
+        self._devnum = 0  # USB device number when (re)connected
+        self._kind = ""  # Saver's detected type at connect, e.g. "H4"
+        self._had_connection = False  # connected to a followed device
+        self._app_since: float | None = None  # app port seen since (lost)
         self.lost = False  # left the app state while connected
         self.reason = ""
         self.reconnects = 0
         self._own_change = False  # our own connect/disconnect in progress
         self._next_try = 0.0
-        self._waiters: list[tuple[str, Future, float, float]] = []
+        self._waiters: list[dict] = []
         self._timer = QTimer(self)
         self._timer.setInterval(poll_ms)
         self._timer.timeout.connect(self.poll)
@@ -91,20 +96,29 @@ class DeviceWatch(QObject):
             "reconnects": self.reconnects,
         }
 
-    def wait(self, state: str, timeout_s: float) -> Future:
+    def wait(
+        self, state: str, timeout_s: float, expect_change: bool = False
+    ) -> Future:
         """Future resolved with snapshot() once the device is in `state`
-        (for "app": also reconnected and idle), or at the timeout."""
+        (for "app": also reconnected and idle), or at the timeout.
+
+        expect_change: the caller has just restarted the device (reset,
+        flash). The device stays on USB for a moment after the command,
+        so without this "app" would be true at once (seen on the real
+        device 11.11.); with it the wait first needs to see the device
+        leave `state`."""
         if state not in usb_state.STATES:
             raise ValueError(
                 f"Tuntematon tila {state!r}; sallitut: "
                 + ", ".join(usb_state.STATES)
             )
         timeout_s = max(0.0, min(float(timeout_s), MAX_WAIT_S))
-        fut: Future = Future()
         now = time.monotonic()
-        self._waiters.append((state, fut, now, now + timeout_s))
+        waiter = {"want": state, "fut": Future(), "started": now,
+                  "deadline": now + timeout_s, "need_change": expect_change}
+        self._waiters.append(waiter)
         self.poll()
-        return fut
+        return waiter["fut"]
 
     # --- internals -------------------------------------------------------
 
@@ -119,6 +133,7 @@ class DeviceWatch(QObject):
         if not connected:
             # the user (or device_disconnect) closed it: stop following
             self.location = None
+            self._had_connection = False
             self.lost = False
             self.reason = ""
             self._update(None, None, "disconnected")
@@ -129,6 +144,9 @@ class DeviceWatch(QObject):
             self.location = None
             return
         self.location = dev.location
+        self._had_connection = True
+        self._devnum = dev.devnum
+        self._kind = getattr(self.app.serial_control.interface, "comment", "")
         self.lost = False
         self.reason = ""
         self._update(dev.state, dev.port, "connected")
@@ -138,6 +156,9 @@ class DeviceWatch(QObject):
         if state == self.state and port == self.port and event == "poll":
             return
         self.state, self.port = state, port
+        for waiter in self._waiters:
+            if state != waiter["want"] or event == "lost":
+                waiter["need_change"] = False  # it has left: now wait
         info = {"event": event, **self.snapshot()}
         logger.info("Device state: %s", info)
         self.changed.emit(info)
@@ -153,15 +174,23 @@ class DeviceWatch(QObject):
             state = dev.state if dev else GONE
             port = dev.port if dev else None
             connected_port = self._connected_port()
-            if connected_port and (state != APP or port != connected_port):
-                self._lose(state, port)
-            elif (
-                self.lost
-                and state == APP
-                and port
-                and time.monotonic() >= self._next_try
+            renumbered = bool(
+                dev and dev.devnum and self._devnum
+                and dev.devnum != self._devnum
+            )
+            if connected_port and (
+                state != APP or port != connected_port or renumbered
             ):
-                self._reconnect(port)
+                self._lose(state if not renumbered else "gone", port)
+            elif self.lost and state == APP and port:
+                now = time.monotonic()
+                if self._app_since is None:
+                    self._app_since = now
+                if (now - self._app_since >= SETTLE_S
+                        and now >= self._next_try):
+                    self._reconnect(port)
+            if state != APP:
+                self._app_since = None
             self._update(state, port, "poll")
         elif not devices:
             self._update(GONE, None, "poll")
@@ -209,6 +238,14 @@ class DeviceWatch(QObject):
         )
         if index < 0:
             return  # not answering yet; try again later
+        kind = getattr(combo.itemData(index), "comment", "")
+        if self._kind and kind != self._kind:
+            # Real device 11.11.: the CDC port is up before the firmware
+            # shell answers; detection then says "Unknown" and every sweep
+            # fails. Only reconnect when it is recognised as before.
+            logger.info("Reconnect waits: %s detected as %r, expected %r",
+                        port, kind, self._kind)
+            return
         combo.setCurrentIndex(index)
         self._own_change = True
         try:
@@ -216,6 +253,8 @@ class DeviceWatch(QObject):
         finally:
             self._own_change = False
         if self.app.vna.connected():
+            dev = usb_state.find(self._scan(), self.location or "")
+            self._devnum = dev.devnum if dev else 0
             self.lost = False
             self.reason = ""
             self.reconnects += 1
@@ -224,6 +263,10 @@ class DeviceWatch(QObject):
     def _ready(self, want: str) -> bool:
         if want != APP:
             return self.state == want
+        if not self._had_connection:
+            # never connected in this session: nothing to reconnect, the
+            # USB state is the answer (device_connect is the caller's)
+            return self.state == APP
         return (
             self.state == APP
             and not self.lost
@@ -234,22 +277,23 @@ class DeviceWatch(QObject):
     def _check_waiters(self) -> None:
         now = time.monotonic()
         keep = []
-        for want, fut, started, deadline in self._waiters:
+        for w in self._waiters:
+            fut = w["fut"]
             if fut.done():
                 continue
-            if self._ready(want):
-                fut.set_result(
-                    {**self.snapshot(), "waited_s": round(now - started, 1)}
-                )
-            elif now >= deadline:
+            waited = round(now - w["started"], 1)
+            if not w["need_change"] and self._ready(w["want"]):
+                fut.set_result({**self.snapshot(), "waited_s": waited})
+            elif now >= w["deadline"]:
                 fut.set_result(
                     {
                         **self.snapshot(),
-                        "waited_s": round(now - started, 1),
+                        "waited_s": waited,
                         "timeout": True,
-                        "wanted": want,
+                        "wanted": w["want"],
+                        "saw_change": not w["need_change"],
                     }
                 )
             else:
-                keep.append((want, fut, started, deadline))
+                keep.append(w)
         self._waiters = keep
