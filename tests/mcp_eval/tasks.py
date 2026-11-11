@@ -200,8 +200,11 @@ CAL_RANGE = (1e6, 30e6)
 CAL_FILE = "eval_kal.cal"
 CAL_STANDARDS_REQUIRED = ("short", "open", "load", "through")
 LOAD_LIMIT_DB = -40.0
+# Words that say the calibration was stopped. Not the standard's name
+# ("short", "oikosulku"): nearly every answer names it, so it would pass
+# an answer that never says the work was interrupted.
 STOP_WORDS = re.compile(
-    r"short|oikosul|keskeyt|peru|pysäyt|pysähd|kieltäy|ei kytk|lopet",
+    r"keskeyt|peru|pysäyt|pysähd|kieltäy|ei kytk|lopet",
     re.IGNORECASE,
 )
 

@@ -157,6 +157,9 @@ def test_cancel_passes_when_the_model_stops_and_says_so():
         ([_ask("open"), _tool("calibration_capture", standard="open")],
          "Keskeytin.", "jatkoi kieltäytymisen jälkeen"),
         ([], "Valmis!", "ei kertonut"),
+        # naming the standard is not telling that the work stopped
+        ([], "Kytke SHORT-standardi porttiin.", "ei kertonut"),
+        ([], "Kytke oikosulku porttiin.", "ei kertonut"),
         ([_tool("calibration_save", path=CAL_FILE)], "Keskeytin.",
          "jatkoi kieltäytymisen jälkeen"),
     ],
