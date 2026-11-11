@@ -89,6 +89,12 @@ def _confirm_standard(standard: str, **_: Any) -> str:
 
 
 def _confirm_shell(command: str, **_: Any) -> str:
+    # Check before asking: a refused command (never-list, wrong class,
+    # unlisted) must fail at once, not be shown to the user for approval.
+    try:
+        shell_allowlist.check(command, Risk.PERSIST)
+    except shell_allowlist.ShellRefused as exc:
+        raise ActionError(str(exc)) from exc
     return shell_allowlist.confirm_text(command)
 
 

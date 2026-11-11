@@ -334,6 +334,28 @@ def test_device_shell_persist_asks_user(saver):
     assert out["output"] == "ok: save 2"
 
 
+@pytest.mark.parametrize("cmd", ["usb mode storage", "config-reset",
+                                 "reset dfu", "sweep-avg 4"])
+def test_device_shell_persist_refuses_before_asking(saver, cmd):
+    # litevna-openvna#186: a refused command must not reach the user's
+    # confirmation dialog (found on the real device 11.11.)
+    _, window, _ = saver
+    window.mcp.control.allow(True)
+    call(saver, "device_connect", {"port": "virtual"})
+    before = len(window.vna.shell_log)
+    asked = []
+
+    async def accept(_ctx, params):
+        asked.append(params.message)
+        return mcp.types.ElicitResult(action="accept", content={"ok": True})
+
+    res = call(saver, "device_shell_persist", {"command": cmd}, elicit=accept)
+    assert is_error(res)
+    assert asked == []
+    assert "Käyttäjä ei hyväksynyt" not in res.content[0].text
+    assert window.vna.shell_log[before:] == []
+
+
 def test_device_shell_refused_on_other_firmware(saver):
     _, window, _ = saver
     window.mcp.control.allow(True)
