@@ -44,6 +44,28 @@ def test_unlisted_commands_refused(cmd):
         classify(cmd)
 
 
+ALWAYS_REFUSED = ["reset", "reset dfu", "reset update", "reset loader",
+                  "config-reset", "usb mode storage", "usb mode charging",
+                  "usb mode control", "dfu", "bootloader"]
+
+
+@pytest.mark.parametrize("cmd", ALWAYS_REFUSED)
+def test_never_list_refuses_with_reason(cmd):
+    # litevna-openvna#186 / #176: explicit list, not just "unlisted"
+    with pytest.raises(ShellRefused, match="kielletty aina"):
+        classify(cmd)
+    for risk in (Risk.READ, Risk.ACT, Risk.PERSIST):
+        with pytest.raises(ShellRefused):
+            check(cmd, risk)
+
+
+@pytest.mark.parametrize("cmd", ALWAYS_REFUSED)
+def test_no_allow_rule_matches_a_never_command(cmd):
+    from NanoVNASaver.MCP.shell_allowlist import INPUT_RULES, RULES
+
+    assert not any(r.pattern.fullmatch(cmd) for r in RULES + INPUT_RULES)
+
+
 @pytest.mark.parametrize("cmd", [
     "version; reset", "version && reset", "version | cat", "info\nreset",
     "info\rreset", "version `reset`", "ver$(sion)", "info > x",

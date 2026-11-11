@@ -32,9 +32,11 @@ permission (AIControl.input_allowed). `cal on` is not listed either: the
 firmware sets the flag without checking that a valid calibration exists
 (litevna-openvna#144); `cal off` and `recall` are enough.
 
-Deliberately NOT here (refused because unlisted): anything that flashes or
-reboots (`reset`, `config-reset`, bootloader and DFU commands), changes
-the USB mode or the SD card (`usb ...`, `sd read|cs|...`, `fs`), writes
+Always refused, with a reason (NEVER_RULES, checked first): `reset` in any
+form, `config-reset`, `usb mode ...`, `dfu`, `bootloader`.
+
+Deliberately NOT here (refused because unlisted): anything else that
+flashes or reboots, changes the USB state or the SD card (`usb ...`, `sd read|cs|...`, `fs`), writes
 registers or pins (`pin mode`, `rf set`, `i2c`, `clk-drive`, `test-mode`)
 and `clk-set` (changes the measurement clock; the owner decides whether
 it belongs here, litevna-openvna#108). Calibration standards are
@@ -115,6 +117,24 @@ RULES: tuple[ShellRule, ...] = (
 )
 
 
+# Never allowed, whatever RULES says: these leave the device in a state that
+# only a human at the bench can undo (litevna-openvna#186, #176). Checked
+# before RULES, so a later rule cannot open them by accident; a test also
+# asserts that no rule matches them. Safe remote versions come with
+# litevna-openvna#175 (USB mode with a timer) and #179 (`reset loader`).
+NEVER_RULES: tuple[ShellRule, ...] = (
+    _r(r"reset( .*)?", P,
+       "reboots the device; `reset dfu` does not enumerate and has no way "
+       "back without a human (litevna-openvna#176), `reset update` "
+       "leaves it in the bootloader"),
+    _r(r"config-reset( .*)?", P, "erases the saved configuration"),
+    _r(r"usb mode( .*)?", P,
+       "Storage/Charging drop the CDC link, and the mode is saved to flash "
+       "(remote-safe version: litevna-openvna#175)"),
+    _r(r"(dfu|bootloader)( .*)?", P, "enters a bootloader"),
+)
+
+
 # Events for the device's own user interface (device_input). Same character
 # rules as the shell; sent only with the separate UI-control permission.
 INPUT_RULES: tuple[ShellRule, ...] = (
@@ -145,6 +165,11 @@ def normalize(command: str) -> str:
 def classify(command: str) -> tuple[str, ShellRule]:
     """Normalized command and its rule, or ShellRefused."""
     cmd = normalize(command)
+    for rule in NEVER_RULES:
+        if rule.pattern.fullmatch(cmd):
+            raise ShellRefused(
+                f"Komento '{cmd}' on kielletty aina: {rule.reason}."
+            )
     for rule in RULES:
         if rule.pattern.fullmatch(cmd):
             return cmd, rule

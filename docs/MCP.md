@@ -148,7 +148,11 @@ hylätään, samoin `;`, `|`, `&`, rivinvaihdot ja muut erikoismerkit.
 
 - Työkalu hylkää komennon, jos se kuuluu toiseen luokkaan, ja kertoo oikean työkalun nimen.
 - Toimii vain Missing Linkin laiteohjelmistolla (`version` vastaa `proto 1.x`), ei käynnissä olevan pyyhkäisyn aikana.
-- Ei koskaan `device_shell`-työkaluilla: `reset`, `config-reset`, USB-tilan vaihto, `sd read`, rekisteri- ja pinnikomennot, `clk-set`
+- Aina kielletty (`NEVER_RULES`, tarkistetaan ennen sallittujen listaa, oma virheviesti syineen): `reset` kaikkine
+  muotoineen (`reset dfu`, `reset update`), `config-reset`, `usb mode …`, `dfu`, `bootloader`. Nämä jättävät laitteen
+  tilaan, josta pääsee pois vain laitteen ääressä (litevna-openvna#186, #176). Turvalliset etäversiot tulevat
+  issueista #175 (USB-tila ajastimella) ja #179 (`reset loader`).
+- Ei listalla, joten hylätään: `sd read`, rekisteri- ja pinnikomennot, `clk-set`
   (omistaja päättää, kuuluuko se listaan) ja kalibrointistandardien `cal open|short|load`
   (käytä `calibration_capture`, joka pyytää ihmistä kytkemään standardin).
 - Vastaus: `{command, output, truncated, error, ms}`; `error` on tosi, jos laite vastasi `?`-rivillä.
