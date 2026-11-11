@@ -10,7 +10,12 @@ import time
 
 import pytest
 
-from NanoVNASaver.device_lock import DeviceLock, LockBusy, lock_path
+from NanoVNASaver.device_lock import (
+    DeviceLock,
+    LockBusy,
+    lock_path,
+    read_holder,
+)
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="the other holder is simulated with fcntl"
@@ -57,7 +62,7 @@ def test_path_follows_env(path):
     assert lock_path() == path
 
 
-def test_acquire_writes_holder_and_release_removes_it(path):
+def test_acquire_writes_holder_and_release_empties_it(path):
     lock = DeviceLock()
     lock.acquire("NanoVNA-Saver")
     assert lock.held
@@ -69,8 +74,33 @@ def test_acquire_writes_holder_and_release_removes_it(path):
     lock.acquire("again")  # idempotent
     lock.release()
     assert not lock.held
-    assert not os.path.exists(path + ".holder")
+    # emptied, not deleted: another user's file could not be deleted
+    assert os.path.getsize(path + ".holder") == 0
+    assert read_holder(path) is None
     lock.release()  # idempotent
+
+
+def test_files_of_another_user_open_without_o_creat(path, monkeypatch):
+    """/run/lock is sticky; with fs.protected_regular O_CREAT on an
+    existing file owned by another user fails with PermissionError, even
+    at mode 0666 (found on the test machine, #156). Simulated here."""
+    for name in (path, path + ".holder"):
+        with open(name, "w", encoding="utf-8"):
+            pass  # created "by another user"
+    real_open = os.open
+
+    def protected_open(name, flags, *args):
+        if flags & os.O_CREAT and os.path.exists(name):
+            raise PermissionError(13, "Permission denied", name)
+        return real_open(name, flags, *args)
+
+    monkeypatch.setattr(os, "open", protected_open)
+    lock = DeviceLock()
+    lock.acquire("NanoVNA-Saver")
+    assert lock.held  # before the fix: a warning and no lock at all
+    assert read_holder(path)["purpose"] == "NanoVNA-Saver"
+    lock.release()
+    assert read_holder(path) is None
 
 
 def test_busy_lock_is_refused_with_holder(path, other_holder):

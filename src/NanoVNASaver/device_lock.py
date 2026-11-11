@@ -99,12 +99,29 @@ def read_holder(path: str | None = None) -> dict | None:
         return None
 
 
-def _open(path: str) -> int:
+def _open_shared(path: str, flags: int) -> int:
+    """Open a file that several users share in a sticky directory such as
+    /run/lock (same as tools/vna_lock.py, litevna-openvna cb8a57c).
+
+    With fs.protected_regular (1 or 2 on current Linux) open() with
+    O_CREAT is refused for an EXISTING file that another user owns in a
+    sticky world-writable directory, even with mode 0666. So open an
+    existing file without O_CREAT and create it (0666) only when missing."""
+    try:
+        return os.open(path, flags)
+    except FileNotFoundError:
+        pass
     old = os.umask(0)
     try:
-        return os.open(path, os.O_RDWR | os.O_CREAT, 0o666)
+        return os.open(path, flags | os.O_CREAT, 0o666)
+    except FileExistsError:  # another process created it in between
+        return os.open(path, flags)
     finally:
         os.umask(old)
+
+
+def _open(path: str) -> int:
+    return _open_shared(path, os.O_RDWR)
 
 
 def _try_lock(fd: int) -> bool:
@@ -170,29 +187,26 @@ class DeviceLock:
             "since": time.time(),
             "purpose": purpose,
         }
-        old = os.umask(0)
         try:
             with open(
-                os.open(
-                    path + ".holder",
-                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-                    0o666,
-                ),
+                _open_shared(path + ".holder", os.O_WRONLY | os.O_TRUNC),
                 "w",
                 encoding="utf-8",
             ) as f:
                 json.dump(holder, f)
         except OSError:
             pass  # holder info is a courtesy; the flock is the lock
-        finally:
-            os.umask(old)
         logger.info("Laitelukko otettu: %s (%s)", path, purpose)
 
     def release(self) -> None:
         if self._fd is None:
             return
+        # Empty it instead of deleting: in a sticky directory only the
+        # owner may delete a file, so another user's holder file would stay
+        # and show a stale holder.
         with contextlib.suppress(OSError):
-            os.remove(self.path + ".holder")
+            os.close(_open_shared(self.path + ".holder",
+                                  os.O_WRONLY | os.O_TRUNC))
         _unlock(self._fd)
         os.close(self._fd)
         self._fd = None
