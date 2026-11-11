@@ -106,6 +106,10 @@ class FakeUsb:
 @pytest.fixture()
 def saver(tmp_path, monkeypatch):
     monkeypatch.setattr(device_watch, "RETRY_S", 0.0)
+    # reconnecting rescans ports: never probe a real VNA that is plugged in
+    import serial.tools.list_ports as list_ports
+
+    monkeypatch.setattr(list_ports, "comports", lambda *a, **k: [])
     VirtualVNA.enable()
     qapp = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     from NanoVNASaver.NanoVNASaver import NanoVNASaver
