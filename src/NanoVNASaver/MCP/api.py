@@ -46,6 +46,7 @@ from ..Settings.Sweep import SweepMode
 from ..Touchstone import Touchstone
 from .bridge import Pending
 from . import shell_allowlist
+from .device_watch import MAX_WAIT_S, DeviceWatch
 from .registry import Risk, action
 
 if TYPE_CHECKING:
@@ -260,6 +261,8 @@ class SaverAPI:
 
         # Instance attribute shadows the method for every caller.
         app.showError = show_error  # type: ignore[method-assign]
+        # follows the device across resets and mode changes (#190)
+        self.watch = DeviceWatch(app)
 
     # --- helpers ---------------------------------------------------------
 
@@ -406,7 +409,8 @@ class SaverAPI:
                 fut.set_result(True)
 
         signals.finished.connect(done)
-        sc.connect_device()
+        self.last_error = ""
+        sc.connect_device(purpose="NanoVNA-Saver MCP (device_connect)")
         if not self.app.vna.connected():
             signals.finished.disconnect(done)
             raise ActionError(
@@ -447,8 +451,10 @@ class SaverAPI:
         mcp = getattr(self.app, "mcp", None)
         ui = mcp.control.input_status() if mcp is not None else None
         if not vna.connected():
-            return {"connected": False, "ui_control": ui}
+            return {"connected": False, "usb": self.watch.snapshot(),
+                    "ui_control": ui}
         return {
+            "usb": self.watch.snapshot(),
             "ui_control": ui,
             "connected": True,
             "name": vna.name,
@@ -588,6 +594,36 @@ class SaverAPI:
         <text>". The user confirms every call. Returns {command, output,
         truncated, error, ms}."""
         return self._shell(command, Risk.PERSIST)
+
+    @action(
+        "device_wait",
+        risk=Risk.READ,
+        category="device",
+        gui=("Serial port control: Connect to device (by hand after a reset)",),
+        timeout=MAX_WAIT_S + 30,
+    )
+    def device_wait(
+        self,
+        state: Literal[
+            "app", "loader", "vendor_bl", "storage", "rom_dfu", "gone"
+        ] = "app",
+        timeout_s: float = 60,
+        expect_change: bool = False,
+    ) -> Pending:
+        """Wait until the LiteVNA is in `state` and return the state seen.
+
+        States (seen from USB): app = firmware running (serial port),
+        vendor_bl = dark-screen update mode, storage = USB Storage mode (no
+        serial port), rom_dfu = chip ROM DFU, loader = boot menu (not on
+        USB yet), gone = not on USB. Use after anything that restarts the
+        device: Saver reconnects by itself when the device is back in
+        app, and "app" returns only when it is connected again and idle,
+        so sweep_run works right after. Right after a command that
+        restarts the device (reset, flash) pass expect_change=true: the
+        device is still up for a moment, and the wait must first see it
+        leave. timeout_s max 300. On timeout the result has "timeout":
+        true and the state that was seen."""
+        return Pending(self.watch.wait(state, timeout_s, expect_change))
 
     @action(
         "device_set_datapoints",
