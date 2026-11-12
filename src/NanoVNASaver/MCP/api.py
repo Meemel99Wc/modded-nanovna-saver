@@ -444,9 +444,12 @@ class SaverAPI:
         """Connected device: name, firmware version, features, data points,
         IF bandwidth, frequency limits and serial number."""
         vna = self.app.vna
+        mcp = getattr(self.app, "mcp", None)
+        ui = mcp.control.input_status() if mcp is not None else None
         if not vna.connected():
-            return {"connected": False}
+            return {"connected": False, "ui_control": ui}
         return {
+            "ui_control": ui,
             "connected": True,
             "name": vna.name,
             "firmware": str(vna.version),

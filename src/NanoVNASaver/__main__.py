@@ -83,6 +83,13 @@ def main():
         help="Allow AI control at start (otherwise the user ticks it)",
     )
     parser.add_argument(
+        "--mcp-allow-input",
+        action="store_true",
+        help="Headless test machine only: allow device_input (driving the "
+        "device's own UI, which can reach DFU, USB mode and saving) for "
+        "every connection until STOP. Logged. Needs --headless",
+    )
+    parser.add_argument(
         "--mcp-dir",
         type=Path,
         help="Work folder for files read/written by MCP",
@@ -109,6 +116,9 @@ def main():
         "--version", action="version", version=f"NanoVNASaver {VERSION}"
     )
     args = parser.parse_args()
+    if args.mcp_allow_input and not (args.headless and args.mcp != "off"):
+        # with a window the user grants it in the AI panel, per connection
+        parser.error("--mcp-allow-input needs --headless and --mcp")
 
     if args.headless:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -156,6 +166,7 @@ def main():
             allow=args.mcp_allow,
             workspace=args.mcp_dir,
             headless=args.headless,
+            allow_input=args.mcp_allow_input,
         )
     )
     if not args.headless:
